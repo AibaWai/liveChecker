@@ -2,6 +2,7 @@ const { Client, GatewayIntentBits, EmbedBuilder } = require('discord.js');
 const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
+const http = require('http');
 
 // 設定檔案
 const CONFIG = {
@@ -233,5 +234,16 @@ if (!CONFIG.DISCORD_TOKEN || !CONFIG.CHANNEL_ID || !CONFIG.INSTAGRAM_USERNAME) {
     console.error('- INSTAGRAM_USERNAME: 要監控的Instagram用戶名');
     process.exit(1);
 }
+
+// 創建HTTP服務器給Koyeb健康檢查
+const server = http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('Instagram Live Monitor Bot is running!');
+});
+
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => {
+    console.log(`🌐 HTTP服務器運行在端口 ${PORT}`);
+});
 
 client.login(CONFIG.DISCORD_TOKEN);
