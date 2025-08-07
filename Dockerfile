@@ -1,20 +1,17 @@
-# 使用Node.js 18官方映像
+# Node.js的版本
 FROM node:18
 
-# 設定工作目錄
+# 作業目錄設為 /app
 WORKDIR /app
 
-# 複製app資料夾內的所有內容到容器的/app目錄
+# app 資料夾內的內容複製到容器的 /app 
 COPY app/ .
 
-# 安裝依賴
+# 依賴關係的安裝
 RUN npm install
 
-# 暴露端口（Koyeb需要）
+# 端口開放（Koyeb用）
 EXPOSE 3000
 
-# 設置環境變數
-ENV NODE_ENV=production
-
-# 啟動應用 - 使用exec form確保信號正確處理
-ENTRYPOINT ["node", "index.js"]
+# 應用程式的啟動
+CMD ["node", "index.js"]
