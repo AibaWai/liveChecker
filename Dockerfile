@@ -13,5 +13,8 @@ RUN npm install
 # 暴露端口（Koyeb需要）
 EXPOSE 3000
 
-# 啟動應用
-CMD ["node", "index.js"]
+# 設置環境變數
+ENV NODE_ENV=production
+
+# 啟動應用 - 使用exec form確保信號正確處理
+ENTRYPOINT ["node", "index.js"]
