@@ -1,7 +1,7 @@
 {
   "name": "instagram-live-monitor",
   "version": "1.0.0",
-  "description": "Instagram Live Monitor with Discord notifications",
+  "description": "Instagram Live Monitor with Discord webhook notifications",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",

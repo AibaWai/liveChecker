@@ -1,23 +1,3 @@
-'''
-# Node.js的版本
-FROM node:18
-
-# 作業目錄設為 /app
-WORKDIR /app
-
-# app 資料夾內的內容複製到容器的 /app 
-COPY app/ .
-
-# 依賴關係的安裝
-RUN npm install
-
-# 端口開放（Koyeb用）
-EXPOSE 3000
-
-# 應用程式的啟動
-CMD ["node", "index.js"]
-'''
-
 FROM node:18-slim
 
 # Install dependencies for Playwright
@@ -52,11 +32,8 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# app 資料夾內的內容複製到容器的 /app 
-COPY app/ .
-
-# Copy package files
-COPY package*.json ./
+# Copy package files first for better caching
+COPY app/package*.json ./
 
 # Install npm dependencies
 RUN npm ci --only=production
@@ -65,12 +42,12 @@ RUN npm ci --only=production
 RUN npx playwright install chromium --with-deps
 
 # Copy application code
-COPY . .
+COPY app/ .
 
 # Create logs directory
 RUN mkdir -p logs
 
-# Expose port (if needed for health checks)
+# Expose port (for health checks)
 EXPOSE 3000
 
 # Run the application
