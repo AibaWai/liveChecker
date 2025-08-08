@@ -184,36 +184,66 @@ async function checkLiveStatus() {
         console.log('📄 HTML Preview (first 300 chars):');
         console.log(html.substring(0, 300));
         
-        // Check if we're actually logged in
-        console.log('\n🔍 Verifying login status...');
+        // Check if we're actually logged in - Enhanced detection
+        console.log('\n🔍 Verifying login status (Enhanced)...');
+        
+        // More comprehensive login checks
         const loginIndicators = [
             html.includes('Log in'),
             html.includes('Sign up'),
             html.includes('Create account'),
             html.includes('login_form'),
             html.includes('loginForm'),
+            html.includes('"require_login":true'),
             !html.includes('feed_timeline'),
             !html.includes('timeline_media')
         ];
         
         const isLoggedIn = !loginIndicators.some(indicator => indicator);
-        console.log(`📊 Login status: ${isLoggedIn ? '✅ Logged in' : '❌ Not logged in'}`);
         
-        // Check for user-specific elements that indicate successful login
+        // Check for authenticated user elements
         const userElements = [
             html.includes('direct_v2'),
             html.includes('notifications'),
             html.includes('activity_feed'),
             html.includes('profileMenu'),
-            html.includes('"viewer"')
+            html.includes('"viewer"'),
+            html.includes('ig_homepage'),
+            html.includes('logged_in_user'),
+            html.includes('user_id')
         ];
         
         const hasUserElements = userElements.some(element => element);
+        
+        // Check for cookie validity indicators
+        const cookieValidators = [
+            html.includes('sessionid'),
+            html.includes('csrftoken'),
+            html.includes('"authenticated":true'),
+            html.includes('"viewer":'),
+            html.includes('window._sharedData')
+        ];
+        
+        const hasCookieData = cookieValidators.some(validator => validator);
+        
+        console.log(`📊 Login status: ${isLoggedIn ? '✅ Logged in' : '❌ Not logged in'}`);
         console.log(`📊 User elements: ${hasUserElements ? '✅ Found' : '❌ Missing'}`);
+        console.log(`📊 Cookie data: ${hasCookieData ? '✅ Present' : '❌ Missing'}`);
+        
+        // Detailed cookie analysis
+        console.log('\n🔍 Cookie Analysis:');
+        console.log(`   - sessionid length: ${IG_SESSION_ID?.length || 0} chars`);
+        console.log(`   - csrftoken length: ${IG_CSRF_TOKEN?.length || 0} chars`);
+        console.log(`   - ds_user_id length: ${IG_DS_USER_ID?.length || 0} chars`);
         
         if (!isLoggedIn || !hasUserElements) {
-            console.log('⚠️ WARNING: May not be properly logged in to Instagram');
-            console.log('This could explain why live status is not visible');
+            console.log('⚠️ WARNING: Instagram authentication failed!');
+            console.log('🔧 Possible solutions:');
+            console.log('   1. Update Instagram cookies in Koyeb environment variables');
+            console.log('   2. Ensure cookies are from the same browser session');
+            console.log('   3. Check if Instagram account is not restricted');
+            
+            await sendDiscordMessage('⚠️ Instagram login failed! Please update cookies: IG_SESSION_ID, IG_CSRF_TOKEN, IG_DS_USER_ID');
         }
         
         // === COMPREHENSIVE LIVE DETECTION ===
