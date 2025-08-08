@@ -268,68 +268,137 @@ async function checkLiveStatus() {
         
         console.log(`📊 Total JSON scripts checked: ${scriptCount}`);
         
-        // Method 3: Search for specific HTML patterns (excluding CSS)
-        console.log('\n🔎 Method 3: Checking HTML patterns...');
+        // Method 3: Search for specific HTML patterns (including live badge)
+        console.log('\n🔎 Method 3: Checking HTML patterns for live badge...');
         
         // Remove CSS and style blocks to avoid false positives
         let cleanHtml = html
             .replace(/<style[^>]*>.*?<\/style>/gis, '')
-            .replace(/--ig-[^;]*;/g, '')
-            .replace(/style="[^"]*"/g, '');
+            .replace(/--ig-[^;]*;/g, '');
         
-        const htmlPatterns = [
-            // Broadcast status in HTML
+        // Specific patterns based on actual Instagram live badge structure
+        const liveBadgePatterns = [
+            // Direct broadcast status in JSON
             /"broadcast_status":\s*"active"/,
             /"is_live":\s*true/,
             
-            // Live elements
-            /class="[^"]*live[^"]*"[^>]*>[^<]*live/i,
-            /data-[^=]*="[^"]*live[^"]*"/,
+            // Instagram live badge structure (the exact pattern you found!)
+            /<span[^>]*class="[^"]*x972fbf[^"]*"[^>]*style="[^"]*border:\s*2px\s+solid[^"]*"[^>]*>(?:直播|LIVE|Live)<\/span>/i,
+            /<span[^>]*style="[^"]*border:\s*2px\s+solid[^"]*"[^>]*>(?:直播|LIVE|Live)<\/span>/i,
             
-            // LIVE text in elements
-            />\s*LIVE\s*</i,
-            /aria-label="[^"]*live[^"]*"/i
+            // More flexible live badge patterns
+            /<span[^>]*>(?:直播|LIVE)<\/span>/i,
+            /<div[^>]*><span[^>]*>(?:直播|LIVE)<\/span><\/div>/i,
+            
+            // Style-based detection (border + LIVE text)
+            /style="[^"]*border:\s*2px\s+solid[^"]*"[^>]*>(?:直播|LIVE)/i,
+            /border-radius:\s*4px[^>]*>(?:直播|LIVE)/i,
+            
+            // Class-based detection with common Instagram classes
+            /class="[^"]*x972fbf[^"]*"[^>]*>(?:直播|LIVE)/i,
+            /class="[^"]*x10w94by[^"]*"[^>]*>(?:直播|LIVE)/i,
+            
+            // General live indicators
+            /aria-label="[^"]*(?:live|直播)[^"]*"/i,
+            /data-[^=]*="[^"]*(?:live|直播)[^"]*"/,
+            
+            // Text patterns
+            />(?:\s*)(?:直播|LIVE)(?:\s*)</i
         ];
         
-        for (let i = 0; i < htmlPatterns.length; i++) {
-            const pattern = htmlPatterns[i];
-            const matches = cleanHtml.match(pattern);
+        console.log(`🔍 Checking ${liveBadgePatterns.length} live badge patterns...`);
+        
+        for (let i = 0; i < liveBadgePatterns.length; i++) {
+            const pattern = liveBadgePatterns[i];
+            const matches = html.match(pattern); // Using original html, not cleaned
             
             if (matches) {
-                console.log(`🔴 LIVE detected via HTML pattern ${i + 1}: ${pattern.toString()}`);
-                const matchIndex = cleanHtml.indexOf(matches[0]);
-                const context = cleanHtml.substring(Math.max(0, matchIndex - 150), matchIndex + 150);
-                console.log(`🎯 HTML Context: "${context}"`);
+                console.log(`🔴 LIVE BADGE DETECTED via pattern ${i + 1}: ${pattern.toString()}`);
+                console.log(`🎯 Matched text: "${matches[0]}"`);
+                
+                // Show larger context around the match
+                const matchIndex = html.indexOf(matches[0]);
+                const contextStart = Math.max(0, matchIndex - 200);
+                const contextEnd = Math.min(html.length, matchIndex + 200);
+                const context = html.substring(contextStart, contextEnd);
+                console.log(`🎯 Full context: "${context}"`);
                 return true;
             }
         }
         
-        console.log('✅ HTML patterns: No live indicators');
+        // Additional check: search for the exact HTML structure you provided
+        console.log('\n🔎 Method 3.1: Checking for exact live badge structure...');
         
-        // Method 4: Search for any mention of live/broadcast/streaming
+        const exactPatterns = [
+            // The exact pattern from your finding
+            /x6s0dn4\s+xc4rmwq\s+x78zum5.*?直播/i,
+            /x972fbf\s+x10w94by.*?直播/i,
+            /border:\s*2px\s+solid\s+rgb\(255,\s*255,\s*255\).*?直播/i,
+            /font-size:\s*8px.*?直播/i,
+            /padding:\s*0px\s+4px.*?直播/i
+        ];
+        
+        for (let i = 0; i < exactPatterns.length; i++) {
+            const pattern = exactPatterns[i];
+            const matches = html.match(pattern);
+            
+            if (matches) {
+                console.log(`🔴 EXACT LIVE BADGE DETECTED via pattern ${i + 1}!`);
+                console.log(`🎯 Matched: "${matches[0].substring(0, 100)}..."`);
+                return true;
+            }
+        }
+        
+        console.log('✅ HTML live badge patterns: No matches found');
+        
+        // Method 4: Search for live-related keywords (including Chinese)
         console.log('\n🔎 Method 4: Searching for live-related keywords...');
         
-        const keywords = ['live', 'broadcast', 'streaming', 'LIVE', 'Live'];
+        const keywords = ['直播', 'live', 'LIVE', 'Live', 'broadcast', 'streaming'];
         let keywordFinds = {};
+        let foundLiveKeyword = false;
         
         for (const keyword of keywords) {
             const regex = new RegExp(keyword, 'gi');
-            const matches = cleanHtml.match(regex);
+            const matches = html.match(regex);
             if (matches) {
                 keywordFinds[keyword] = matches.length;
                 console.log(`📊 Found "${keyword}": ${matches.length} times`);
+                
+                // Special attention to "直播" and "LIVE" in HTML elements
+                if (keyword === '直播' || keyword === 'LIVE') {
+                    const elementRegex = new RegExp(`<[^>]*>${keyword}</[^>]*>`, 'gi');
+                    const elementMatches = html.match(elementRegex);
+                    if (elementMatches) {
+                        console.log(`🔴 "${keyword}" found in HTML elements: ${elementMatches.length} times`);
+                        for (let i = 0; i < Math.min(elementMatches.length, 3); i++) {
+                            console.log(`🎯 Element ${i + 1}: "${elementMatches[i]}"`);
+                        }
+                        foundLiveKeyword = true;
+                    }
+                }
                 
                 // Show first few contexts
                 const keywordRegex = new RegExp(keyword, 'gi');
                 let match;
                 let contextCount = 0;
-                while ((match = keywordRegex.exec(cleanHtml)) !== null && contextCount < 3) {
-                    const start = Math.max(0, match.index - 80);
-                    const end = Math.min(cleanHtml.length, match.index + 80);
-                    console.log(`🎯 "${keyword}" context ${contextCount + 1}: "${cleanHtml.substring(start, end)}"`);
-                    contextCount++;
+                while ((match = keywordRegex.exec(html)) !== null && contextCount < 2) {
+                    const start = Math.max(0, match.index - 100);
+                    const end = Math.min(html.length, match.index + 100);
+                    const context = html.substring(start, end);
+                    
+                    // Only show if it's not in CSS
+                    if (!context.includes('--ig-') && !context.includes('css')) {
+                        console.log(`🎯 "${keyword}" context ${contextCount + 1}: "${context}"`);
+                        contextCount++;
+                    }
                 }
             }
+        }
+        
+        if (foundLiveKeyword) {
+            console.log('🔴 LIVE KEYWORD DETECTED in HTML elements!');
+            return true;
         }
         
         if (Object.keys(keywordFinds).length === 0) {
