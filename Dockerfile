@@ -9,7 +9,7 @@ COPY app/package-http.json package.json
 RUN npm install --only=production
 
 # Copy HTTP version main file
-COPY app/http-main.js main.js
+COPY app/main.js main.js
 
 # Expose port
 EXPOSE 3000
