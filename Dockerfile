@@ -48,17 +48,17 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 
 # Copy package files
-COPY package*.json ./
+COPY app/package*.json ./
 
 # Install dependencies
-RUN npm ci --only=production
+RUN npm install --only=production
 
 # Install Playwright browsers
 RUN npx playwright install chromium
 RUN npx playwright install-deps chromium
 
 # Copy application code
-COPY . .
+COPY app/ ./
 
 # Create non-root user
 RUN groupadd -r appuser && useradd -r -g appuser -G audio,video appuser \
