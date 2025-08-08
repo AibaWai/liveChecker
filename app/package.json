@@ -1,10 +1,11 @@
 {
-  "name": "instagram-live-monitor-http",
+  "name": "instagram-live-monitor-playwright",
   "version": "1.0.0",
-  "description": "Lightweight Instagram Live monitor using HTTP API",
+  "description": "Instagram Live monitor using Playwright automation",
   "main": "main.js",
   "scripts": {
-    "start": "node main.js"
+    "start": "node main.js",
+    "install-browsers": "npx playwright install chromium"
   },
   "keywords": [
     "instagram",
@@ -12,13 +13,14 @@
     "monitor",
     "discord",
     "bot",
-    "http",
-    "api"
+    "playwright",
+    "automation"
   ],
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "discord.js": "^14.14.1"
+    "discord.js": "^14.14.1",
+    "playwright": "^1.40.0"
   },
   "engines": {
     "node": ">=18.0.0"

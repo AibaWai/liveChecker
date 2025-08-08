@@ -1,6 +1,5 @@
 const { Client, GatewayIntentBits } = require('discord.js');
-const https = require('https');
-const zlib = require('zlib');
+const { chromium } = require('playwright');
 
 // Environment variables
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
@@ -20,6 +19,8 @@ const client = new Client({
 });
 
 let isLiveNow = false;
+let browser = null;
+let context = null;
 
 // Initialize Discord bot
 client.once('ready', () => {
@@ -58,340 +59,302 @@ async function sendDiscordMessage(message) {
     }
 }
 
-// Make HTTP request with proper error handling and decompression
-function makeRequest(url, options = {}) {
-    return new Promise((resolve, reject) => {
-        const req = https.request(url, options, (res) => {
-            let data = [];
-            
-            // Handle redirects
-            if (res.statusCode === 301 || res.statusCode === 302) {
-                console.log(`Redirect detected: ${res.statusCode} to ${res.headers.location}`);
-                resolve({
-                    statusCode: res.statusCode,
-                    headers: res.headers,
-                    data: '',
-                    redirectLocation: res.headers.location
-                });
-                return;
-            }
-            
-            // Collect data as Buffer chunks
-            res.on('data', (chunk) => data.push(chunk));
-            
-            res.on('end', () => {
-                let buffer = Buffer.concat(data);
-                let finalData = '';
-                
-                // Handle different encodings
-                const encoding = res.headers['content-encoding'];
-                
-                try {
-                    if (encoding === 'gzip') {
-                        finalData = zlib.gunzipSync(buffer).toString('utf8');
-                    } else if (encoding === 'deflate') {
-                        finalData = zlib.inflateSync(buffer).toString('utf8');
-                    } else if (encoding === 'br') {
-                        finalData = zlib.brotliDecompressSync(buffer).toString('utf8');
-                    } else {
-                        finalData = buffer.toString('utf8');
-                    }
-                } catch (decompressError) {
-                    console.log('❌ Decompression failed, using raw content:', decompressError.message);
-                    finalData = buffer.toString('utf8');
-                }
-                
-                resolve({ 
-                    statusCode: res.statusCode, 
-                    headers: res.headers, 
-                    data: finalData 
-                });
-            });
-        });
-        
-        req.on('error', reject);
-        req.setTimeout(30000, () => {
-            req.destroy();
-            reject(new Error('Request timeout'));
-        });
-        req.end();
-    });
-}
-
-// Enhanced request with session persistence and JavaScript simulation
-async function makeEnhancedRequest(url) {
-    console.log(`🔍 Making enhanced request to: ${url}`);
-    
-    // Enhanced headers to better simulate a real browser
-    const enhancedHeaders = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
-        'Accept-Language': 'zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'Cache-Control': 'no-cache',
-        'Cookie': `sessionid=${IG_SESSION_ID}; csrftoken=${IG_CSRF_TOKEN}; ds_user_id=${IG_DS_USER_ID}; rur="CLN\\05462966\\0541759885160:01f75e646da28254a58b85c3a0b17e49dd5b2b73b5e4aee0d08a6a50fe1b0cd5c5b6b10e"`,
-        'Sec-Ch-Ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
-        'Sec-Ch-Ua-Mobile': '?0',
-        'Sec-Ch-Ua-Platform': '"Windows"',
-        'Sec-Fetch-Dest': 'document',
-        'Sec-Fetch-Mode': 'navigate',
-        'Sec-Fetch-Site': 'none',
-        'Sec-Fetch-User': '?1',
-        'Upgrade-Insecure-Requests': '1',
-        'Connection': 'keep-alive'
-    };
-    
-    const response = await makeRequest(url, {
-        method: 'GET',
-        headers: enhancedHeaders
-    });
-    
-    if (response.statusCode !== 200) {
-        console.log(`❌ Enhanced request failed: HTTP ${response.statusCode}`);
-        return null;
-    }
-    
-    return response.data;
-}
-
-// Try alternative Instagram endpoints
-async function checkAlternativeEndpoints() {
-    console.log('🔍 Trying alternative Instagram endpoints...');
-    
-    const endpoints = [
-        // Mobile web version (might have different content)
-        `https://www.instagram.com/${TARGET_USERNAME}/?__a=1&__d=dis`,
-        
-        // Profile with specific parameters
-        `https://www.instagram.com/${TARGET_USERNAME}/?hl=zh-tw`,
-        
-        // Mobile user agent specific
-        `https://www.instagram.com/${TARGET_USERNAME}/`
-    ];
-    
-    for (let i = 0; i < endpoints.length; i++) {
-        const endpoint = endpoints[i];
-        console.log(`🔎 Trying endpoint ${i + 1}: ${endpoint}`);
-        
-        try {
-            let headers = {
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                'Accept-Language': 'zh-TW,zh;q=0.9,en;q=0.8',
-                'Accept-Encoding': 'gzip, deflate, br',
-                'Cookie': `sessionid=${IG_SESSION_ID}; csrftoken=${IG_CSRF_TOKEN}; ds_user_id=${IG_DS_USER_ID}`,
-                'Connection': 'keep-alive',
-                'Upgrade-Insecure-Requests': '1'
-            };
-            
-            // For mobile endpoints, use mobile user agent
-            if (i === 2) {
-                headers['User-Agent'] = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
-            } else {
-                headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
-            }
-            
-            const response = await makeRequest(endpoint, {
-                method: 'GET',
-                headers: headers
-            });
-            
-            if (response.statusCode === 200) {
-                const html = response.data;
-                console.log(`📊 Endpoint ${i + 1} success: ${html.length} chars`);
-                
-                // Check if this endpoint has more content
-                if (html.includes('window._sharedData') || 
-                    html.includes('__d(') || 
-                    html.includes('直播') ||
-                    html.includes('<main') ||
-                    html.includes('react-root')) {
-                    
-                    console.log(`✅ Endpoint ${i + 1} has dynamic content!`);
-                    return { endpoint, html };
-                } else {
-                    console.log(`❌ Endpoint ${i + 1} also has static content`);
-                }
-            } else {
-                console.log(`❌ Endpoint ${i + 1} failed: HTTP ${response.statusCode}`);
-            }
-            
-            // Small delay between requests
-            await new Promise(resolve => setTimeout(resolve, 1000));
-            
-        } catch (error) {
-            console.log(`❌ Endpoint ${i + 1} error: ${error.message}`);
-        }
-    }
-    
-    return null;
-}
-
-// Try to make multiple requests with delays to simulate browser behavior
-async function checkLiveWithBrowserSimulation() {
+// Initialize browser and context
+async function initializeBrowser() {
     try {
-        console.log(`🔍 Checking @${TARGET_USERNAME} with browser simulation...`);
+        console.log('🚀 Launching Playwright browser...');
         
-        // First, try alternative endpoints
-        const altResult = await checkAlternativeEndpoints();
-        if (altResult) {
-            console.log(`🎯 Using alternative endpoint: ${altResult.endpoint}`);
-            
-            // Analyze the content from alternative endpoint
-            return await analyzeLiveContent(altResult.html);
-        }
+        browser = await chromium.launch({
+            headless: true,
+            args: [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage',
+                '--disable-accelerated-2d-canvas',
+                '--disable-gpu',
+                '--window-size=1920,1080',
+                '--disable-features=VizDisplayCompositor'
+            ]
+        });
         
-        // If no alternative endpoints work, try multiple requests to main URL
-        console.log('🔄 Trying multiple requests to main URL...');
+        context = await browser.newContext({
+            viewport: { width: 1920, height: 1080 },
+            userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            locale: 'zh-TW'
+        });
         
-        const url = `https://www.instagram.com/${TARGET_USERNAME}/`;
-        
-        for (let attempt = 1; attempt <= 3; attempt++) {
-            console.log(`📡 Request attempt ${attempt}/3...`);
-            
-            const html = await makeEnhancedRequest(url);
-            if (!html) continue;
-            
-            console.log(`📊 Attempt ${attempt}: ${html.length} characters`);
-            
-            // Check if we got better content
-            const hasJsContent = html.includes('window._sharedData') || html.includes('__d(');
-            const hasMainContent = html.includes('<main') || html.includes('react-root');
-            
-            console.log(`   JS Content: ${hasJsContent ? '✅' : '❌'}`);
-            console.log(`   Main Content: ${hasMainContent ? '✅' : '❌'}`);
-            
-            if (hasJsContent || hasMainContent) {
-                console.log(`✅ Attempt ${attempt} got dynamic content!`);
-                return await analyzeLiveContent(html);
+        // Add Instagram cookies
+        await context.addCookies([
+            {
+                name: 'sessionid',
+                value: IG_SESSION_ID,
+                domain: '.instagram.com',
+                path: '/',
+                httpOnly: true,
+                secure: true
+            },
+            {
+                name: 'csrftoken',
+                value: IG_CSRF_TOKEN,
+                domain: '.instagram.com',
+                path: '/',
+                httpOnly: false,
+                secure: true
+            },
+            {
+                name: 'ds_user_id',
+                value: IG_DS_USER_ID,
+                domain: '.instagram.com',
+                path: '/',
+                httpOnly: false,
+                secure: true
             }
-            
-            // Wait longer between attempts
-            if (attempt < 3) {
-                console.log(`⏳ Waiting 5 seconds before next attempt...`);
-                await new Promise(resolve => setTimeout(resolve, 5000));
-            }
-        }
+        ]);
         
-        console.log('❌ All attempts failed to get dynamic content');
-        return false;
+        console.log('✅ Browser initialized with Instagram cookies');
+        return true;
         
     } catch (error) {
-        console.error('❌ Error in browser simulation:', error);
+        console.error('❌ Failed to initialize browser:', error);
         return false;
     }
 }
 
-// Analyze HTML content for live indicators
-async function analyzeLiveContent(html) {
-    console.log(`🔍 Analyzing content for live indicators...`);
+// Check live status using Playwright
+async function checkLiveStatusWithPlaywright() {
+    let page = null;
     
-    // Method 1: Look for JavaScript data
-    if (html.includes('window._sharedData')) {
-        console.log('📦 Found _sharedData, parsing...');
-        
-        const sharedDataMatch = html.match(/window\._sharedData\s*=\s*({.*?});/s);
-        if (sharedDataMatch) {
-            try {
-                const sharedData = JSON.parse(sharedDataMatch[1]);
-                const jsonStr = JSON.stringify(sharedData);
-                
-                // Check for live indicators in JSON
-                const liveIndicators = [
-                    '"is_live":true',
-                    '"broadcast_status":"active"',
-                    '"media_type":4',
-                    'GraphLiveVideo'
-                ];
-                
-                for (const indicator of liveIndicators) {
-                    if (jsonStr.includes(indicator)) {
-                        console.log(`🔴 LIVE detected via JSON: ${indicator}`);
-                        return true;
-                    }
-                }
-                
-            } catch (e) {
-                console.log('❌ Failed to parse _sharedData');
-            }
-        }
-    }
-    
-    // Method 2: Look for HTML live indicators
-    const htmlLivePatterns = [
-        /直播/g,
-        /LIVE/g,
-        /<span[^>]*>(?:直播|LIVE)<\/span>/gi,
-        /<div[^>]*class="[^"]*live[^"]*"[^>]*>/gi
-    ];
-    
-    for (const pattern of htmlLivePatterns) {
-        const matches = html.match(pattern);
-        if (matches) {
-            // Filter out script/CSS false positives
-            const validMatches = matches.filter(match => {
-                const context = html.substring(
-                    html.indexOf(match) - 100,
-                    html.indexOf(match) + 100
-                );
-                return !context.includes('script') && 
-                       !context.includes('--ig-live') && 
-                       !context.includes('css');
-            });
-            
-            if (validMatches.length > 0) {
-                console.log(`🔴 LIVE detected via HTML: ${validMatches[0]}`);
-                return true;
-            }
-        }
-    }
-    
-    console.log('⚫ No live indicators found in content');
-    return false;
-}
-
-// Simple login verification
-async function verifyInstagramLogin() {
     try {
-        console.log('🔍 Verifying Instagram login...');
+        console.log(`🔍 Checking @${TARGET_USERNAME} with Playwright...`);
         
-        const html = await makeEnhancedRequest(`https://www.instagram.com/${TARGET_USERNAME}/`);
+        if (!browser || !context) {
+            console.log('🔄 Browser not initialized, initializing...');
+            const initialized = await initializeBrowser();
+            if (!initialized) {
+                console.log('❌ Failed to initialize browser');
+                return false;
+            }
+        }
         
-        if (html && html.includes(TARGET_USERNAME) && !html.includes('Log in')) {
-            console.log('✅ Instagram login verified');
-            return true;
-        } else {
-            console.log('❌ Instagram login failed');
+        page = await context.newPage();
+        
+        // Set additional headers
+        await page.setExtraHTTPHeaders({
+            'Accept-Language': 'zh-TW,zh;q=0.9,en;q=0.8'
+        });
+        
+        const url = `https://www.instagram.com/${TARGET_USERNAME}/`;
+        console.log(`📱 Navigating to: ${url}`);
+        
+        // Navigate to Instagram profile
+        await page.goto(url, { 
+            waitUntil: 'networkidle',
+            timeout: 30000 
+        });
+        
+        console.log('✅ Page loaded, checking for login status...');
+        
+        // Check if we're logged in
+        const loginButton = await page.locator('text=Log in').first();
+        const isLoginPage = await loginButton.isVisible().catch(() => false);
+        
+        if (isLoginPage) {
+            console.log('❌ Detected login page - cookies may be invalid');
             return false;
         }
         
-    } catch (error) {
-        console.error('❌ Error verifying login:', error);
+        console.log('✅ Successfully logged in to Instagram');
+        
+        // Wait for profile content to load
+        console.log('⏳ Waiting for profile content to load...');
+        await page.waitForTimeout(5000);
+        
+        // Method 1: Look for live badge in Chinese
+        console.log('🔍 Method 1: Searching for Chinese live badge...');
+        const chineseLiveBadge = page.locator('text=直播').first();
+        const hasChineseLive = await chineseLiveBadge.isVisible().catch(() => false);
+        
+        if (hasChineseLive) {
+            console.log('🔴 LIVE DETECTED via Chinese badge: 直播');
+            return true;
+        }
+        
+        // Method 2: Look for live badge in English
+        console.log('🔍 Method 2: Searching for English live badge...');
+        const englishLiveBadge = page.locator('text=LIVE').first();
+        const hasEnglishLive = await englishLiveBadge.isVisible().catch(() => false);
+        
+        if (hasEnglishLive) {
+            console.log('🔴 LIVE DETECTED via English badge: LIVE');
+            return true;
+        }
+        
+        // Method 3: Look for live badge with specific styles
+        console.log('🔍 Method 3: Searching for styled live badges...');
+        const styledLiveBadges = [
+            'span:has-text("直播")',
+            'span:has-text("LIVE")',
+            '[style*="border: 2px solid"]:has-text("直播")',
+            '[style*="border: 2px solid"]:has-text("LIVE")'
+        ];
+        
+        for (const selector of styledLiveBadges) {
+            try {
+                const badge = page.locator(selector).first();
+                const isVisible = await badge.isVisible().catch(() => false);
+                
+                if (isVisible) {
+                    const badgeText = await badge.textContent().catch(() => '');
+                    console.log(`🔴 LIVE DETECTED via styled badge: "${badgeText}" (selector: ${selector})`);
+                    return true;
+                }
+            } catch (error) {
+                // Continue to next selector
+            }
+        }
+        
+        // Method 4: Check story ring for live indicator
+        console.log('🔍 Method 4: Checking story ring for live indicator...');
+        
+        // Look for story ring with live indicator
+        const storyRingSelectors = [
+            'canvas',  // Story rings are often drawn on canvas
+            '[role="button"]:has(canvas)',  // Story ring buttons
+            'div:has(canvas):has-text("直播")',
+            'div:has(canvas):has-text("LIVE")'
+        ];
+        
+        for (const selector of storyRingSelectors) {
+            try {
+                const element = page.locator(selector).first();
+                const isVisible = await element.isVisible().catch(() => false);
+                
+                if (isVisible) {
+                    // Check if parent or nearby elements contain live text
+                    const parent = element.locator('..'); // Parent element
+                    const parentText = await parent.textContent().catch(() => '');
+                    
+                    if (parentText.includes('直播') || parentText.includes('LIVE')) {
+                        console.log(`🔴 LIVE DETECTED via story ring: "${parentText}"`);
+                        return true;
+                    }
+                }
+            } catch (error) {
+                // Continue to next selector
+            }
+        }
+        
+        // Method 5: JavaScript execution to check data
+        console.log('🔍 Method 5: Executing JavaScript to check for live data...');
+        
+        const liveData = await page.evaluate(() => {
+            // Check window._sharedData
+            if (window._sharedData && window._sharedData.entry_data) {
+                const profileData = window._sharedData.entry_data.ProfilePage;
+                if (profileData && profileData[0] && profileData[0].graphql) {
+                    const user = profileData[0].graphql.user;
+                    if (user) {
+                        return {
+                            is_live: user.is_live,
+                            broadcast_status: user.broadcast ? user.broadcast.broadcast_status : null,
+                            has_broadcast: !!user.broadcast
+                        };
+                    }
+                }
+            }
+            
+            // Check for live text in DOM
+            const liveElements = document.querySelectorAll('*');
+            let foundLiveText = false;
+            
+            for (const el of liveElements) {
+                const text = el.textContent || '';
+                if ((text === '直播' || text === 'LIVE') && 
+                    el.tagName === 'SPAN' && 
+                    el.style.border && 
+                    el.style.border.includes('2px solid')) {
+                    foundLiveText = true;
+                    break;
+                }
+            }
+            
+            return {
+                found_live_text: foundLiveText,
+                total_elements_checked: liveElements.length
+            };
+        });
+        
+        console.log('📊 JavaScript execution result:', liveData);
+        
+        if (liveData.is_live === true || 
+            liveData.broadcast_status === 'active' ||
+            liveData.found_live_text === true) {
+            console.log('🔴 LIVE DETECTED via JavaScript execution!');
+            return true;
+        }
+        
+        // Method 6: Take screenshot for debugging (optional)
+        console.log('📸 Taking screenshot for debugging...');
+        await page.screenshot({ 
+            path: '/tmp/instagram_debug.png',
+            fullPage: false 
+        });
+        console.log('✅ Screenshot saved to /tmp/instagram_debug.png');
+        
+        console.log('⚫ No live indicators found');
         return false;
+        
+    } catch (error) {
+        console.error('❌ Error checking live status with Playwright:', error);
+        return false;
+    } finally {
+        if (page) {
+            try {
+                await page.close();
+            } catch (error) {
+                console.error('Error closing page:', error);
+            }
+        }
+    }
+}
+
+// Clean up browser resources
+async function cleanupBrowser() {
+    try {
+        if (context) {
+            await context.close();
+            context = null;
+        }
+        if (browser) {
+            await browser.close();
+            browser = null;
+        }
+        console.log('✅ Browser resources cleaned up');
+    } catch (error) {
+        console.error('❌ Error cleaning up browser:', error);
     }
 }
 
 // Main monitoring loop
 async function startMonitoring() {
-    console.log(`🚀 Starting Instagram Live monitoring for @${TARGET_USERNAME} (Browser Simulation)`);
+    console.log(`🚀 Starting Instagram Live monitoring for @${TARGET_USERNAME} (Playwright)`);
     
-    // Verify login first
-    const loginValid = await verifyInstagramLogin();
-    
-    if (!loginValid) {
-        const errorMsg = '❌ Instagram login failed! Please update your cookies and restart.';
+    // Initialize browser
+    const initialized = await initializeBrowser();
+    if (!initialized) {
+        const errorMsg = '❌ Failed to initialize Playwright browser!';
         console.error(errorMsg);
         await sendDiscordMessage(errorMsg);
-        console.log('🛑 Stopping service due to authentication failure...');
         process.exit(1);
     }
     
-    console.log('✅ Instagram login verified!');
-    await sendDiscordMessage(`🤖 Instagram Live Monitor started for @${TARGET_USERNAME} (Browser Sim) ✅`);
+    console.log('✅ Playwright browser initialized!');
+    await sendDiscordMessage(`🤖 Instagram Live Monitor started for @${TARGET_USERNAME} (Playwright) ✅`);
     
     // Initial check
     console.log('🔎 Performing initial live status check...');
     try {
-        const initialStatus = await checkLiveWithBrowserSimulation();
+        const initialStatus = await checkLiveStatusWithPlaywright();
         isLiveNow = initialStatus;
         
         if (initialStatus) {
@@ -403,11 +366,11 @@ async function startMonitoring() {
         console.error('❌ Initial check failed:', error);
     }
     
-    // Monitor every 2 minutes with browser simulation
+    // Monitor every 2 minutes
     console.log('⏰ Starting monitoring loop (every 2 minutes)...');
     setInterval(async () => {        
         try {
-            const currentlyLive = await checkLiveWithBrowserSimulation();
+            const currentlyLive = await checkLiveStatusWithPlaywright();
             
             // Status changed to live
             if (currentlyLive && !isLiveNow) {
@@ -428,24 +391,38 @@ async function startMonitoring() {
             
         } catch (error) {
             console.error('❌ Error in monitoring loop:', error);
+            
+            // Try to reinitialize browser if there's an error
+            console.log('🔄 Attempting to reinitialize browser...');
+            await cleanupBrowser();
+            await initializeBrowser();
         }
     }, 2 * 60 * 1000); // Check every 2 minutes
     
+    // Cleanup browser every hour to prevent memory leaks
+    setInterval(async () => {
+        console.log('🔄 Performing hourly browser cleanup...');
+        await cleanupBrowser();
+        await initializeBrowser();
+    }, 60 * 60 * 1000); // Every hour
+    
     // Heartbeat every 10 minutes
     setInterval(() => {
-        console.log(`💓 Monitor active - @${TARGET_USERNAME} | ${isLiveNow ? '🔴 LIVE' : '⚫ Offline'} | ${new Date().toLocaleString('zh-TW')}`);
+        console.log(`💓 Playwright monitor active - @${TARGET_USERNAME} | ${isLiveNow ? '🔴 LIVE' : '⚫ Offline'} | ${new Date().toLocaleString('zh-TW')}`);
     }, 10 * 60 * 1000);
 }
 
 // Handle process termination
 process.on('SIGINT', async () => {
     console.log('Shutting down...');
+    await cleanupBrowser();
     await client.destroy();
     process.exit(0);
 });
 
 process.on('SIGTERM', async () => {
     console.log('Shutting down...');
+    await cleanupBrowser();
     await client.destroy();
     process.exit(0);
 });
