@@ -1,5 +1,6 @@
 const { Client, GatewayIntentBits } = require('discord.js');
 const https = require('https');
+const zlib = require('zlib');
 
 // Environment variables
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
@@ -57,11 +58,11 @@ async function sendDiscordMessage(message) {
     }
 }
 
-// Make HTTP request with proper error handling
+// Make HTTP request with proper error handling and decompression
 function makeRequest(url, options = {}) {
     return new Promise((resolve, reject) => {
         const req = https.request(url, options, (res) => {
-            let data = '';
+            let data = [];
             
             // Handle redirects
             if (res.statusCode === 301 || res.statusCode === 302) {
@@ -75,12 +76,39 @@ function makeRequest(url, options = {}) {
                 return;
             }
             
-            res.on('data', (chunk) => data += chunk);
+            // Collect data as Buffer chunks
+            res.on('data', (chunk) => data.push(chunk));
+            
             res.on('end', () => {
+                let buffer = Buffer.concat(data);
+                let finalData = '';
+                
+                // Handle different encodings
+                const encoding = res.headers['content-encoding'];
+                
+                try {
+                    if (encoding === 'gzip') {
+                        console.log('📦 Decompressing gzip content...');
+                        finalData = zlib.gunzipSync(buffer).toString('utf8');
+                    } else if (encoding === 'deflate') {
+                        console.log('📦 Decompressing deflate content...');
+                        finalData = zlib.inflateSync(buffer).toString('utf8');
+                    } else if (encoding === 'br') {
+                        console.log('📦 Decompressing brotli content...');
+                        finalData = zlib.brotliDecompressSync(buffer).toString('utf8');
+                    } else {
+                        console.log('📦 No compression detected, using raw content...');
+                        finalData = buffer.toString('utf8');
+                    }
+                } catch (decompressError) {
+                    console.log('❌ Decompression failed, using raw content:', decompressError.message);
+                    finalData = buffer.toString('utf8');
+                }
+                
                 resolve({ 
                     statusCode: res.statusCode, 
                     headers: res.headers, 
-                    data: data 
+                    data: finalData 
                 });
             });
         });
@@ -124,6 +152,8 @@ async function checkLiveStatus() {
         
         console.log(`📊 Response status: ${response.statusCode}`);
         console.log(`📊 Content length: ${response.data.length} characters`);
+        console.log(`📊 Content encoding: ${response.headers['content-encoding'] || 'none'}`);
+        console.log(`📊 Content type: ${response.headers['content-type'] || 'unknown'}`);
         
         // Handle redirects (likely means cookies expired)
         if (response.statusCode === 301 || response.statusCode === 302) {
@@ -154,6 +184,13 @@ async function checkLiveStatus() {
         console.log('✅ Successfully accessed Instagram profile page');
         console.log('📄 HTML Preview (first 500 chars):');
         console.log(html.substring(0, 500));
+        
+        // Check if HTML contains meaningful content
+        if (html.length < 1000 || !html.includes('<html') && !html.includes('<!DOCTYPE')) {
+            console.log('❌ Received invalid or incomplete HTML content');
+            console.log('📄 Raw content sample:', response.data.substring(0, 200));
+            return false;
+        }
         
         // Enhanced live detection patterns
         const livePatterns = [
