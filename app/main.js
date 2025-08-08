@@ -118,188 +118,235 @@ function makeRequest(url, options = {}) {
     });
 }
 
-// Check live status by examining actual HTML content
-async function checkLiveStatus() {
-    try {
-        console.log(`🔍 Checking if @${TARGET_USERNAME} is live...`);
+// Enhanced request with session persistence and JavaScript simulation
+async function makeEnhancedRequest(url) {
+    console.log(`🔍 Making enhanced request to: ${url}`);
+    
+    // Enhanced headers to better simulate a real browser
+    const enhancedHeaders = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+        'Accept-Language': 'zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Cache-Control': 'no-cache',
+        'Cookie': `sessionid=${IG_SESSION_ID}; csrftoken=${IG_CSRF_TOKEN}; ds_user_id=${IG_DS_USER_ID}; rur="CLN\\05462966\\0541759885160:01f75e646da28254a58b85c3a0b17e49dd5b2b73b5e4aee0d08a6a50fe1b0cd5c5b6b10e"`,
+        'Sec-Ch-Ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+        'Sec-Ch-Ua-Mobile': '?0',
+        'Sec-Ch-Ua-Platform': '"Windows"',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'none',
+        'Sec-Fetch-User': '?1',
+        'Upgrade-Insecure-Requests': '1',
+        'Connection': 'keep-alive'
+    };
+    
+    const response = await makeRequest(url, {
+        method: 'GET',
+        headers: enhancedHeaders
+    });
+    
+    if (response.statusCode !== 200) {
+        console.log(`❌ Enhanced request failed: HTTP ${response.statusCode}`);
+        return null;
+    }
+    
+    return response.data;
+}
+
+// Try alternative Instagram endpoints
+async function checkAlternativeEndpoints() {
+    console.log('🔍 Trying alternative Instagram endpoints...');
+    
+    const endpoints = [
+        // Mobile web version (might have different content)
+        `https://www.instagram.com/${TARGET_USERNAME}/?__a=1&__d=dis`,
         
-        const headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
-            'Accept-Language': 'zh-TW,zh;q=0.9,en;q=0.8',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'Cookie': `sessionid=${IG_SESSION_ID}; csrftoken=${IG_CSRF_TOKEN}; ds_user_id=${IG_DS_USER_ID}`,
-            'Sec-Ch-Ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
-            'Sec-Ch-Ua-Mobile': '?0',
-            'Sec-Ch-Ua-Platform': '"Windows"',
-            'Sec-Fetch-Dest': 'document',
-            'Sec-Fetch-Mode': 'navigate',
-            'Sec-Fetch-Site': 'none',
-            'Sec-Fetch-User': '?1',
-            'Upgrade-Insecure-Requests': '1'
-        };
+        // Profile with specific parameters
+        `https://www.instagram.com/${TARGET_USERNAME}/?hl=zh-tw`,
+        
+        // Mobile user agent specific
+        `https://www.instagram.com/${TARGET_USERNAME}/`
+    ];
+    
+    for (let i = 0; i < endpoints.length; i++) {
+        const endpoint = endpoints[i];
+        console.log(`🔎 Trying endpoint ${i + 1}: ${endpoint}`);
+        
+        try {
+            let headers = {
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'zh-TW,zh;q=0.9,en;q=0.8',
+                'Accept-Encoding': 'gzip, deflate, br',
+                'Cookie': `sessionid=${IG_SESSION_ID}; csrftoken=${IG_CSRF_TOKEN}; ds_user_id=${IG_DS_USER_ID}`,
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1'
+            };
+            
+            // For mobile endpoints, use mobile user agent
+            if (i === 2) {
+                headers['User-Agent'] = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
+            } else {
+                headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+            }
+            
+            const response = await makeRequest(endpoint, {
+                method: 'GET',
+                headers: headers
+            });
+            
+            if (response.statusCode === 200) {
+                const html = response.data;
+                console.log(`📊 Endpoint ${i + 1} success: ${html.length} chars`);
+                
+                // Check if this endpoint has more content
+                if (html.includes('window._sharedData') || 
+                    html.includes('__d(') || 
+                    html.includes('直播') ||
+                    html.includes('<main') ||
+                    html.includes('react-root')) {
+                    
+                    console.log(`✅ Endpoint ${i + 1} has dynamic content!`);
+                    return { endpoint, html };
+                } else {
+                    console.log(`❌ Endpoint ${i + 1} also has static content`);
+                }
+            } else {
+                console.log(`❌ Endpoint ${i + 1} failed: HTTP ${response.statusCode}`);
+            }
+            
+            // Small delay between requests
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            
+        } catch (error) {
+            console.log(`❌ Endpoint ${i + 1} error: ${error.message}`);
+        }
+    }
+    
+    return null;
+}
+
+// Try to make multiple requests with delays to simulate browser behavior
+async function checkLiveWithBrowserSimulation() {
+    try {
+        console.log(`🔍 Checking @${TARGET_USERNAME} with browser simulation...`);
+        
+        // First, try alternative endpoints
+        const altResult = await checkAlternativeEndpoints();
+        if (altResult) {
+            console.log(`🎯 Using alternative endpoint: ${altResult.endpoint}`);
+            
+            // Analyze the content from alternative endpoint
+            return await analyzeLiveContent(altResult.html);
+        }
+        
+        // If no alternative endpoints work, try multiple requests to main URL
+        console.log('🔄 Trying multiple requests to main URL...');
         
         const url = `https://www.instagram.com/${TARGET_USERNAME}/`;
-        const response = await makeRequest(url, {
-            method: 'GET',
-            headers: headers
-        });
         
-        if (response.statusCode !== 200) {
-            console.log(`❌ HTTP ${response.statusCode}`);
-            return false;
-        }
-        
-        const html = response.data;
-        console.log(`📊 Received HTML: ${html.length} characters`);
-        
-        // === DETAILED HTML CONTENT ANALYSIS ===
-        console.log('\n🔍 === ANALYZING ACTUAL HTML CONTENT ===');
-        
-        // Show HTML structure
-        console.log('\n📋 HTML Document Structure:');
-        const docTypeMatch = html.match(/<!DOCTYPE[^>]*>/i);
-        console.log(`   DOCTYPE: ${docTypeMatch ? docTypeMatch[0] : 'Not found'}`);
-        
-        const htmlTagMatch = html.match(/<html[^>]*>/i);
-        console.log(`   HTML tag: ${htmlTagMatch ? htmlTagMatch[0].substring(0, 100) + '...' : 'Not found'}`);
-        
-        const titleMatch = html.match(/<title[^>]*>([^<]*)<\/title>/i);
-        console.log(`   Title: ${titleMatch ? titleMatch[1] : 'Not found'}`);
-        
-        const bodyMatch = html.match(/<body[^>]*>/i);
-        console.log(`   Body tag: ${bodyMatch ? bodyMatch[0].substring(0, 100) + '...' : 'Not found'}`);
-        
-        // Show first 2000 characters of HTML
-        console.log('\n📄 HTML Content (first 2000 chars):');
-        console.log('='.repeat(80));
-        console.log(html.substring(0, 2000));
-        console.log('='.repeat(80));
-        
-        // Show last 1000 characters of HTML
-        console.log('\n📄 HTML Content (last 1000 chars):');
-        console.log('='.repeat(80));
-        console.log(html.substring(Math.max(0, html.length - 1000)));
-        console.log('='.repeat(80));
-        
-        // Look for main content area
-        console.log('\n🔍 Searching for main content structures...');
-        
-        const mainPatterns = [
-            /<main[^>]*>/i,
-            /<div[^>]*id="react-root"[^>]*>/i,
-            /<div[^>]*role="main"[^>]*>/i,
-            /<section[^>]*>/i,
-            /<article[^>]*>/i,
-            /<div[^>]*class="[^"]*container[^"]*"[^>]*>/i
-        ];
-        
-        for (let i = 0; i < mainPatterns.length; i++) {
-            const pattern = mainPatterns[i];
-            const match = html.match(pattern);
-            if (match) {
-                console.log(`✅ Found main structure ${i + 1}: ${match[0]}`);
-                
-                // Show content around this structure
-                const index = html.indexOf(match[0]);
-                const surrounding = html.substring(index, index + 500);
-                console.log(`   Content: ${surrounding.replace(/\s+/g, ' ')}`);
-            } else {
-                console.log(`❌ Main pattern ${i + 1}: Not found`);
-            }
-        }
-        
-        // Check for JavaScript/React content
-        console.log('\n🔍 Checking for JavaScript/React content...');
-        const jsPatterns = [
-            /window\._sharedData/,
-            /react/i,
-            /__d\(/,
-            /require\(/,
-            /"props":/,
-            /"state":/
-        ];
-        
-        for (const pattern of jsPatterns) {
-            const match = html.match(pattern);
-            if (match) {
-                console.log(`✅ Found JS pattern: ${pattern} -> "${match[0]}"`);
-            } else {
-                console.log(`❌ JS pattern not found: ${pattern}`);
-            }
-        }
-        
-        // Check what type of page we're getting
-        console.log('\n🔍 Page Type Analysis:');
-        
-        if (html.includes('Log in')) {
-            console.log('🚨 This appears to be a LOGIN PAGE!');
-            console.log('   Possible reasons: Cookies expired, IP blocked, or access denied');
-            return false;
-        }
-        
-        if (html.length < 10000) {
-            console.log('⚠️ HTML is suspiciously short - might be an error page');
-        }
-        
-        if (html.includes('error') || html.includes('Error')) {
-            console.log('⚠️ HTML contains error keywords');
-        }
-        
-        if (html.includes(TARGET_USERNAME)) {
-            console.log(`✅ HTML contains target username: ${TARGET_USERNAME}`);
-        } else {
-            console.log(`❌ HTML does NOT contain target username: ${TARGET_USERNAME}`);
-        }
-        
-        // Look for specific Instagram elements
-        console.log('\n🔍 Looking for Instagram-specific elements...');
-        
-        const igElements = [
-            'instagram',
-            'profile',
-            'avatar',
-            'follow',
-            'post',
-            'story',
-            'bio'
-        ];
-        
-        for (const element of igElements) {
-            if (html.toLowerCase().includes(element)) {
-                console.log(`✅ Found Instagram element: ${element}`);
-            } else {
-                console.log(`❌ Missing Instagram element: ${element}`);
-            }
-        }
-        
-        // Finally, check for any Chinese text
-        console.log('\n🔍 Checking for Chinese text...');
-        const chineseMatches = html.match(/[\u4e00-\u9fff]+/g);
-        if (chineseMatches && chineseMatches.length > 0) {
-            const uniqueChinese = [...new Set(chineseMatches)];
-            console.log(`✅ Found Chinese text (${uniqueChinese.length} unique): ${uniqueChinese.slice(0, 10).join(', ')}`);
+        for (let attempt = 1; attempt <= 3; attempt++) {
+            console.log(`📡 Request attempt ${attempt}/3...`);
             
-            // Check specifically for live-related Chinese
-            const liveTerms = ['直播', '直播中', '現在直播', '實況'];
-            for (const term of liveTerms) {
-                if (html.includes(term)) {
-                    console.log(`🔴 FOUND LIVE TERM: ${term}`);
-                    return true;
-                }
+            const html = await makeEnhancedRequest(url);
+            if (!html) continue;
+            
+            console.log(`📊 Attempt ${attempt}: ${html.length} characters`);
+            
+            // Check if we got better content
+            const hasJsContent = html.includes('window._sharedData') || html.includes('__d(');
+            const hasMainContent = html.includes('<main') || html.includes('react-root');
+            
+            console.log(`   JS Content: ${hasJsContent ? '✅' : '❌'}`);
+            console.log(`   Main Content: ${hasMainContent ? '✅' : '❌'}`);
+            
+            if (hasJsContent || hasMainContent) {
+                console.log(`✅ Attempt ${attempt} got dynamic content!`);
+                return await analyzeLiveContent(html);
             }
-        } else {
-            console.log('❌ No Chinese text found');
+            
+            // Wait longer between attempts
+            if (attempt < 3) {
+                console.log(`⏳ Waiting 5 seconds before next attempt...`);
+                await new Promise(resolve => setTimeout(resolve, 5000));
+            }
         }
         
-        console.log('\n🔍 === HTML ANALYSIS COMPLETE ===');
-        
+        console.log('❌ All attempts failed to get dynamic content');
         return false;
         
     } catch (error) {
-        console.error('❌ Error checking live status:', error);
+        console.error('❌ Error in browser simulation:', error);
         return false;
     }
+}
+
+// Analyze HTML content for live indicators
+async function analyzeLiveContent(html) {
+    console.log(`🔍 Analyzing content for live indicators...`);
+    
+    // Method 1: Look for JavaScript data
+    if (html.includes('window._sharedData')) {
+        console.log('📦 Found _sharedData, parsing...');
+        
+        const sharedDataMatch = html.match(/window\._sharedData\s*=\s*({.*?});/s);
+        if (sharedDataMatch) {
+            try {
+                const sharedData = JSON.parse(sharedDataMatch[1]);
+                const jsonStr = JSON.stringify(sharedData);
+                
+                // Check for live indicators in JSON
+                const liveIndicators = [
+                    '"is_live":true',
+                    '"broadcast_status":"active"',
+                    '"media_type":4',
+                    'GraphLiveVideo'
+                ];
+                
+                for (const indicator of liveIndicators) {
+                    if (jsonStr.includes(indicator)) {
+                        console.log(`🔴 LIVE detected via JSON: ${indicator}`);
+                        return true;
+                    }
+                }
+                
+            } catch (e) {
+                console.log('❌ Failed to parse _sharedData');
+            }
+        }
+    }
+    
+    // Method 2: Look for HTML live indicators
+    const htmlLivePatterns = [
+        /直播/g,
+        /LIVE/g,
+        /<span[^>]*>(?:直播|LIVE)<\/span>/gi,
+        /<div[^>]*class="[^"]*live[^"]*"[^>]*>/gi
+    ];
+    
+    for (const pattern of htmlLivePatterns) {
+        const matches = html.match(pattern);
+        if (matches) {
+            // Filter out script/CSS false positives
+            const validMatches = matches.filter(match => {
+                const context = html.substring(
+                    html.indexOf(match) - 100,
+                    html.indexOf(match) + 100
+                );
+                return !context.includes('script') && 
+                       !context.includes('--ig-live') && 
+                       !context.includes('css');
+            });
+            
+            if (validMatches.length > 0) {
+                console.log(`🔴 LIVE detected via HTML: ${validMatches[0]}`);
+                return true;
+            }
+        }
+    }
+    
+    console.log('⚫ No live indicators found in content');
+    return false;
 }
 
 // Simple login verification
@@ -307,15 +354,9 @@ async function verifyInstagramLogin() {
     try {
         console.log('🔍 Verifying Instagram login...');
         
-        const response = await makeRequest(`https://www.instagram.com/${TARGET_USERNAME}/`, {
-            method: 'GET',
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Cookie': `sessionid=${IG_SESSION_ID}; csrftoken=${IG_CSRF_TOKEN}; ds_user_id=${IG_DS_USER_ID}`
-            }
-        });
+        const html = await makeEnhancedRequest(`https://www.instagram.com/${TARGET_USERNAME}/`);
         
-        if (response.statusCode === 200 && !response.data.includes('Log in')) {
+        if (html && html.includes(TARGET_USERNAME) && !html.includes('Log in')) {
             console.log('✅ Instagram login verified');
             return true;
         } else {
@@ -331,7 +372,7 @@ async function verifyInstagramLogin() {
 
 // Main monitoring loop
 async function startMonitoring() {
-    console.log(`🚀 Starting Instagram Live monitoring for @${TARGET_USERNAME} (HTML Content Analysis)`);
+    console.log(`🚀 Starting Instagram Live monitoring for @${TARGET_USERNAME} (Browser Simulation)`);
     
     // Verify login first
     const loginValid = await verifyInstagramLogin();
@@ -345,12 +386,12 @@ async function startMonitoring() {
     }
     
     console.log('✅ Instagram login verified!');
-    await sendDiscordMessage(`🤖 Instagram Live Monitor started for @${TARGET_USERNAME} (HTML Analysis) ✅`);
+    await sendDiscordMessage(`🤖 Instagram Live Monitor started for @${TARGET_USERNAME} (Browser Sim) ✅`);
     
     // Initial check
     console.log('🔎 Performing initial live status check...');
     try {
-        const initialStatus = await checkLiveStatus();
+        const initialStatus = await checkLiveWithBrowserSimulation();
         isLiveNow = initialStatus;
         
         if (initialStatus) {
@@ -362,8 +403,38 @@ async function startMonitoring() {
         console.error('❌ Initial check failed:', error);
     }
     
-    // For debugging, only run once
-    console.log('🔍 DEBUG: Running single check only');
+    // Monitor every 2 minutes with browser simulation
+    console.log('⏰ Starting monitoring loop (every 2 minutes)...');
+    setInterval(async () => {        
+        try {
+            const currentlyLive = await checkLiveWithBrowserSimulation();
+            
+            // Status changed to live
+            if (currentlyLive && !isLiveNow) {
+                isLiveNow = true;
+                console.log('🔴 STATUS CHANGE: User went LIVE!');
+                await sendDiscordMessage(`🔴 @${TARGET_USERNAME} is now LIVE on Instagram! 🎥\nhttps://www.instagram.com/${TARGET_USERNAME}/`);
+            }
+            // Status changed to offline
+            else if (!currentlyLive && isLiveNow) {
+                isLiveNow = false;
+                console.log('⚫ STATUS CHANGE: User went offline');
+                await sendDiscordMessage(`⚫ @${TARGET_USERNAME} has ended their Instagram Live stream.`);
+            }
+            // No change
+            else {
+                console.log(`📊 Status unchanged: ${currentlyLive ? '🔴 LIVE' : '⚫ Offline'}`);
+            }
+            
+        } catch (error) {
+            console.error('❌ Error in monitoring loop:', error);
+        }
+    }, 2 * 60 * 1000); // Check every 2 minutes
+    
+    // Heartbeat every 10 minutes
+    setInterval(() => {
+        console.log(`💓 Monitor active - @${TARGET_USERNAME} | ${isLiveNow ? '🔴 LIVE' : '⚫ Offline'} | ${new Date().toLocaleString('zh-TW')}`);
+    }, 10 * 60 * 1000);
 }
 
 // Handle process termination
