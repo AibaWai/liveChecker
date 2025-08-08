@@ -1,14 +1,13 @@
-const { chromium } = require('playwright');
 const { Client, GatewayIntentBits } = require('discord.js');
+const https = require('https');
 
 // Environment variables
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const DISCORD_CHANNEL_ID = process.env.DISCORD_CHANNEL_ID;
-const IG_USERNAME = process.env.IG_USERNAME;
+const TARGET_USERNAME = process.env.TARGET_USERNAME;
 const IG_SESSION_ID = process.env.IG_SESSION_ID;
 const IG_CSRF_TOKEN = process.env.IG_CSRF_TOKEN;
 const IG_DS_USER_ID = process.env.IG_DS_USER_ID;
-const TARGET_USERNAME = process.env.TARGET_USERNAME;
 
 // Discord client setup
 const client = new Client({ 
@@ -19,10 +18,9 @@ const client = new Client({
     ]
 });
 
-let browser;
-let page;
 let isLiveNow = false;
 let cookiesValid = true;
+let userId = null;
 
 // Initialize Discord bot
 client.once('ready', () => {
@@ -35,13 +33,8 @@ client.once('ready', () => {
     console.log('- IG_CSRF_TOKEN:', IG_CSRF_TOKEN ? 'Set' : 'Missing');
     console.log('- IG_DS_USER_ID:', IG_DS_USER_ID ? 'Set' : 'Missing');
     
-    if (!TARGET_USERNAME) {
-        console.error('TARGET_USERNAME is not set!');
-        return;
-    }
-    
-    if (!DISCORD_CHANNEL_ID) {
-        console.error('DISCORD_CHANNEL_ID is not set!');
+    if (!TARGET_USERNAME || !DISCORD_CHANNEL_ID) {
+        console.error('Missing required environment variables!');
         return;
     }
     
@@ -51,162 +44,197 @@ client.once('ready', () => {
 // Send Discord message
 async function sendDiscordMessage(message) {
     try {
-        if (!DISCORD_CHANNEL_ID) {
-            console.error('DISCORD_CHANNEL_ID not set');
-            return;
-        }
-        
         const channel = await client.channels.fetch(DISCORD_CHANNEL_ID);
-        if (!channel) {
-            console.error('Channel not found or bot has no access');
-            return;
-        }
-        
         await channel.send(message);
         console.log('Discord message sent:', message);
     } catch (error) {
         console.error('Failed to send Discord message:', error);
-        if (error.code === 50001) {
-            console.error('Bot is missing access to the channel. Please check:');
-            console.error('1. Bot is invited to the server');
-            console.error('2. Bot has "View Channel" and "Send Messages" permissions');
-            console.error('3. Channel ID is correct');
+    }
+}
+
+// Make HTTP request
+function makeRequest(url, options = {}) {
+    return new Promise((resolve, reject) => {
+        const req = https.request(url, options, (res) => {
+            let data = '';
+            res.on('data', (chunk) => data += chunk);
+            res.on('end', () => {
+                resolve({ 
+                    statusCode: res.statusCode, 
+                    headers: res.headers, 
+                    data: data 
+                });
+            });
+        });
+        
+        req.on('error', reject);
+        req.setTimeout(30000, () => {
+            req.destroy();
+            reject(new Error('Request timeout'));
+        });
+        
+        if (options.body) {
+            req.write(options.body);
         }
-    }
+        req.end();
+    });
 }
 
-// Setup browser with cookies
-async function setupBrowser() {
+// Get Instagram headers
+function getHeaders() {
+    return {
+        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1',
+        'Accept': '*/*',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'X-IG-App-ID': '936619743392459',
+        'X-IG-WWW-Claim': '0',
+        'X-Requested-With': 'XMLHttpRequest',
+        'Sec-Fetch-Dest': 'empty',
+        'Sec-Fetch-Mode': 'cors',
+        'Sec-Fetch-Site': 'same-origin',
+        'Cookie': `sessionid=${IG_SESSION_ID}; csrftoken=${IG_CSRF_TOKEN}; ds_user_id=${IG_DS_USER_ID}; mid=Zm9jdgALAAE8lHl_KpLHEI8hQDf2; ig_did=B8B8B8B8-B8B8-B8B8-B8B8-B8B8B8B8B8B8; fbm_124024574287414=base_domain=.instagram.com; datr=sNZtZr6tKpLHEI8hQDf2pQ4Q; ig_nrcb=1;`
+    };
+}
+
+// Get user ID from username
+async function getUserId() {
+    if (userId) return userId;
+    
     try {
-        browser = await chromium.launch({
-            headless: true,
-            args: [
-                '--no-sandbox', 
-                '--disable-setuid-sandbox', 
-                '--disable-dev-shm-usage',
-                '--disable-web-security',
-                '--disable-features=VizDisplayCompositor',
-                '--no-first-run',
-                '--disable-default-apps',
-                '--disable-extensions'
-            ]
+        console.log('Getting user ID...');
+        const url = `https://www.instagram.com/api/v1/users/web_profile_info/?username=${TARGET_USERNAME}`;
+        const response = await makeRequest(url, {
+            method: 'GET',
+            headers: getHeaders()
         });
         
-        const context = await browser.newContext({
-            userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-        });
+        if (response.statusCode !== 200) {
+            console.log(`Failed to get user profile: ${response.statusCode}`);
+            return null;
+        }
         
-        page = await context.newPage();
-        
-        // Set cookies
-        await context.addCookies([
-            {
-                name: 'sessionid',
-                value: IG_SESSION_ID,
-                domain: '.instagram.com',
-                path: '/'
-            },
-            {
-                name: 'csrftoken',
-                value: IG_CSRF_TOKEN,
-                domain: '.instagram.com',
-                path: '/'
-            },
-            {
-                name: 'ds_user_id',
-                value: IG_DS_USER_ID,
-                domain: '.instagram.com',
-                path: '/'
-            }
-        ]);
-        
-        console.log('Browser setup completed with cookies');
-        return true;
+        const data = JSON.parse(response.data);
+        userId = data.data?.user?.id;
+        console.log('User ID obtained:', userId);
+        return userId;
     } catch (error) {
-        console.error('Browser setup failed:', error);
-        return false;
+        console.error('Error getting user ID:', error);
+        return null;
     }
 }
 
-// Check if user is live
+// Check live status using multiple methods
 async function checkLiveStatus() {
     try {
-        // Navigate to target user's profile
-        await page.goto(`https://www.instagram.com/${TARGET_USERNAME}/`, {
-            waitUntil: 'networkidle',
-            timeout: 30000
+        console.log('🔍 Checking live status...');
+        
+        // Method 1: Profile API
+        console.log('Method 1: Checking profile API...');
+        const profileUrl = `https://www.instagram.com/api/v1/users/web_profile_info/?username=${TARGET_USERNAME}`;
+        const profileResponse = await makeRequest(profileUrl, {
+            method: 'GET',
+            headers: getHeaders()
         });
         
-        // Wait a bit for page to fully load
-        await page.waitForTimeout(3000);
-        
-        // Check for login redirect (cookies expired)
-        const currentUrl = page.url();
-        if (currentUrl.includes('/accounts/login/')) {
-            console.log('Cookies expired - login required');
+        if (profileResponse.statusCode === 401 || profileResponse.statusCode === 403) {
+            console.log('❌ Authentication failed - cookies expired');
             cookiesValid = false;
-            await sendDiscordMessage('🚨 Instagram cookies expired! Please update the environment variables.');
+            await sendDiscordMessage('🚨 Instagram cookies expired! Please update environment variables.');
             return false;
         }
         
-        // Look for live indicator
-        const liveIndicators = [
-            '[aria-label*="live"]',
-            'text=LIVE',
-            '[data-testid="live-badge"]',
-            '.live-badge',
-            'svg[aria-label*="Live"]'
-        ];
-        
-        let isCurrentlyLive = false;
-        
-        for (const selector of liveIndicators) {
+        if (profileResponse.statusCode === 200) {
             try {
-                const element = await page.locator(selector).first();
-                if (await element.isVisible({ timeout: 2000 })) {
-                    isCurrentlyLive = true;
-                    break;
+                const profileData = JSON.parse(profileResponse.data);
+                const user = profileData.data?.user;
+                
+                if (user) {
+                    // Check broadcast status
+                    if (user.broadcast && user.broadcast.broadcast_status === 'active') {
+                        console.log('✅ LIVE detected via profile API (broadcast active)');
+                        return true;
+                    }
+                    
+                    if (user.is_live === true) {
+                        console.log('✅ LIVE detected via profile API (is_live flag)');
+                        return true;
+                    }
+                    
+                    // Get user ID for other methods
+                    if (!userId) {
+                        userId = user.id;
+                    }
                 }
             } catch (e) {
-                // Continue checking other selectors
+                console.log('Failed to parse profile data');
             }
         }
         
-        // Also check profile picture for live ring
+        // Method 2: Stories API (if user has stories)
+        if (userId) {
+            console.log('Method 2: Checking stories API...');
+            try {
+                const storiesUrl = `https://www.instagram.com/api/v1/feed/user/${userId}/story/`;
+                const storiesResponse = await makeRequest(storiesUrl, {
+                    method: 'GET',
+                    headers: getHeaders()
+                });
+                
+                if (storiesResponse.statusCode === 200) {
+                    const storiesData = JSON.parse(storiesResponse.data);
+                    const hasLiveStory = storiesData.items?.some(item => 
+                        item.media_type === 4 || // Live video type
+                        item.story_type === 'live' ||
+                        (item.video_versions && item.caption?.text?.includes('LIVE'))
+                    );
+                    
+                    if (hasLiveStory) {
+                        console.log('✅ LIVE detected via stories API');
+                        return true;
+                    }
+                }
+            } catch (e) {
+                console.log('Stories API check failed:', e.message);
+            }
+        }
+        
+        // Method 3: GraphQL API
+        console.log('Method 3: Checking GraphQL API...');
         try {
-            const profilePic = await page.locator('[data-testid="user-avatar"]').first();
-            if (await profilePic.isVisible()) {
-                const classList = await profilePic.getAttribute('class');
-                if (classList && classList.includes('live')) {
-                    isCurrentlyLive = true;
+            const variables = JSON.stringify({
+                username: TARGET_USERNAME,
+                fetch_mutual: false,
+                fetch_suggested_users: false,
+                fetch_followed_by_viewer: false
+            });
+            
+            const graphqlUrl = `https://www.instagram.com/graphql/query/?query_hash=c9100bf9110dd6361671f113dd02e7d6&variables=${encodeURIComponent(variables)}`;
+            const graphqlResponse = await makeRequest(graphqlUrl, {
+                method: 'GET',
+                headers: getHeaders()
+            });
+            
+            if (graphqlResponse.statusCode === 200) {
+                const graphqlData = JSON.parse(graphqlResponse.data);
+                const user = graphqlData.data?.user;
+                
+                if (user && user.broadcast && user.broadcast.broadcast_status === 'active') {
+                    console.log('✅ LIVE detected via GraphQL API');
+                    return true;
                 }
             }
         } catch (e) {
-            // Ignore
+            console.log('GraphQL API check failed:', e.message);
         }
         
-        // Check for stories with live badge
-        try {
-            const storyRing = await page.locator('canvas').first();
-            if (await storyRing.isVisible({ timeout: 2000 })) {
-                // Look for live text near story
-                const liveNearStory = await page.locator('text=Live').first();
-                if (await liveNearStory.isVisible({ timeout: 1000 })) {
-                    isCurrentlyLive = true;
-                }
-            }
-        } catch (e) {
-            // Ignore
-        }
-        
-        console.log(`Live status check: ${isCurrentlyLive ? 'LIVE' : 'NOT LIVE'}`);
-        return isCurrentlyLive;
+        console.log('❌ No live stream detected');
+        return false;
         
     } catch (error) {
         console.error('Error checking live status:', error);
         
-        // Check if it's a cookie/auth issue
-        if (error.message.includes('login') || page.url().includes('/accounts/login/')) {
+        if (error.message.includes('401') || error.message.includes('403')) {
             cookiesValid = false;
             await sendDiscordMessage('🚨 Instagram authentication failed! Please update cookies.');
         }
@@ -217,20 +245,29 @@ async function checkLiveStatus() {
 
 // Main monitoring loop
 async function startMonitoring() {
-    console.log(`Starting Instagram Live monitoring for @${TARGET_USERNAME}`);
-    await sendDiscordMessage(`🤖 Instagram Live Monitor started for @${TARGET_USERNAME}`);
+    console.log(`🚀 Starting Instagram Live monitoring for @${TARGET_USERNAME} (HTTP API Version)`);
+    await sendDiscordMessage(`🤖 Instagram Live Monitor started for @${TARGET_USERNAME} (Lightweight HTTP Version)`);
     
-    // Setup browser
-    if (!await setupBrowser()) {
-        await sendDiscordMessage('❌ Failed to setup browser. Retrying in 5 minutes...');
-        setTimeout(startMonitoring, 5 * 60 * 1000);
-        return;
+    // Get user ID first
+    await getUserId();
+    
+    // Initial check
+    console.log('Performing initial live status check...');
+    try {
+        const initialStatus = await checkLiveStatus();
+        isLiveNow = initialStatus;
+        if (initialStatus) {
+            await sendDiscordMessage(`🔴 @${TARGET_USERNAME} is currently LIVE on Instagram! https://www.instagram.com/${TARGET_USERNAME}/`);
+        }
+    } catch (error) {
+        console.error('Initial check failed:', error);
     }
     
     // Monitor every minute
+    console.log('⏰ Starting monitoring loop (every 60 seconds)...');
     setInterval(async () => {
         if (!cookiesValid) {
-            console.log('Cookies invalid, skipping check');
+            console.log('⏭️ Skipping check - cookies invalid');
             return;
         }
         
@@ -240,7 +277,7 @@ async function startMonitoring() {
             // Send notification when going live
             if (currentlyLive && !isLiveNow) {
                 isLiveNow = true;
-                await sendDiscordMessage(`🔴 @${TARGET_USERNAME} is now LIVE on Instagram! https://www.instagram.com/${TARGET_USERNAME}/`);
+                await sendDiscordMessage(`🔴 @${TARGET_USERNAME} is now LIVE on Instagram! 🎥\nhttps://www.instagram.com/${TARGET_USERNAME}/`);
             }
             // Send notification when going offline
             else if (!currentlyLive && isLiveNow) {
@@ -252,23 +289,22 @@ async function startMonitoring() {
             console.error('Error in monitoring loop:', error);
         }
     }, 60 * 1000); // Check every minute
+    
+    // Keep alive heartbeat
+    setInterval(() => {
+        console.log(`💓 Bot heartbeat - monitoring @${TARGET_USERNAME} | Live: ${isLiveNow ? '🔴' : '⚫'} | Cookies: ${cookiesValid ? '✅' : '❌'}`);
+    }, 10 * 60 * 1000); // Every 10 minutes
 }
 
 // Handle process termination
 process.on('SIGINT', async () => {
     console.log('Shutting down...');
-    if (browser) {
-        await browser.close();
-    }
     await client.destroy();
     process.exit(0);
 });
 
 process.on('SIGTERM', async () => {
     console.log('Shutting down...');
-    if (browser) {
-        await browser.close();
-    }
     await client.destroy();
     process.exit(0);
 });
