@@ -1,21 +1,22 @@
-# Playwright 官方 Docker 基底，內建瀏覽器相依
-# 版本號請與你的 package.json 中的 playwright 版本對齊
-FROM mcr.microsoft.com/playwright:v1.54.0-noble
+# 使用官方 Playwright 基底（含瀏覽器與必要依賴）
+FROM mcr.microsoft.com/playwright:v1.46.0-jammy
 
 WORKDIR /app
+COPY package.json package-lock.json* ./
+RUN npm ci
 
-# 先拷貝鎖檔以利快取
-COPY app/package.json app/package-lock.json* ./
-RUN npm ci --omit=dev
+COPY tsconfig.json ./
+COPY src ./src
 
-# 拷貝程式碼
-COPY app/ ./
+# 安裝瀏覽器依賴
+RUN npx playwright install --with-deps
 
-# 安裝 Chromium 與相依（基底已備好系統依賴）
-RUN npx playwright install --with-deps chromium
+# 編譯
+RUN npm run build
 
-# 以非 root 執行（基底映像已內建 pwuser）
-USER pwuser
+# 預設環境
+ENV NODE_ENV=production
+ENV PORT=8080
+EXPOSE 8080
 
-# Worker 類型不需要對外 Port；移除 EXPOSE
-CMD ["node", "index.js"]
+CMD ["npm", "start"]
