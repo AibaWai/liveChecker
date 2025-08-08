@@ -1,0 +1,27 @@
+{
+  "name": "instagram-live-monitor",
+  "version": "1.0.0",
+  "description": "A bot that monitors Instagram Live streams and sends Discord notifications",
+  "main": "main.js",
+  "scripts": {
+    "start": "node main.js",
+    "dev": "node main.js"
+  },
+  "keywords": [
+    "instagram",
+    "live",
+    "monitor",
+    "discord",
+    "bot",
+    "playwright"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "discord.js": "^14.14.1",
+    "playwright": "^1.40.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
