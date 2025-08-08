@@ -192,60 +192,71 @@ async function checkLiveStatus() {
             return false;
         }
         
-        // Enhanced live detection patterns
+        // Enhanced live detection patterns - More specific to avoid false positives
         const livePatterns = [
-            // Direct broadcast status
+            // Direct broadcast status (most reliable)
             /"broadcast_status":"active"/,
             /"broadcast":{"broadcast_status":"active"/,
             /broadcastStatus":"active"/,
             
-            // Live flags
+            // Live flags in user data
             /"is_live":true/,
             /"isLive":true/,
             
-            // Live UI elements
-            /ig-live-badge/,
-            /live-video-indicator/,
-            /aria-label="Live"/i,
-            /<span[^>]*>LIVE<\/span>/i,
-            /class="[^"]*live[^"]*"/i,
-            
-            // GraphQL live video type
+            // GraphQL live video type (very reliable)
             /"__typename":"GraphLiveVideo"/,
             /GraphLiveVideo/,
             
-            // Media type 4 (live video)
-            /"media_type":4/,
+            // Media type 4 (live video in stories/posts)
+            /"media_type":4.*live/i,
             
             // Story live indicators
             /"story_type":"live"/,
             
-            // Broadcast data
+            // Live broadcast data
             /broadcast_owner/,
             /dash_live_encodings/,
-            /live_video_id/,
-            /viewer_count.*broadcast/
+            /"live_video_id":/,
+            /viewer_count.*broadcast/,
+            
+            // UI elements - but more specific to avoid CSS false positives
+            /class="[^"]*ig-live-badge[^"]*"[^>]*>[^<]*LIVE/i,
+            /aria-label="Live[^"]*"[^>]*>[^<]*LIVE/i,
+            /<[^>]*live-video-indicator[^>]*>/i,
+            
+            // Live status in actual content (not CSS)
+            />\s*LIVE\s*<\/[^>]*span>/i,
+            /data-[^=]*="[^"]*live[^"]*"[^>]*>.*LIVE/i
         ];
         
         console.log('🔎 Scanning for live indicators...');
         let foundPatterns = [];
         let detectedLive = false;
         
+        // First, exclude CSS definitions and style blocks
+        const htmlWithoutStyles = html.replace(/<style[^>]*>.*?<\/style>/gis, '')
+                                     .replace(/--ig-[^;]*;/g, '')
+                                     .replace(/style="[^"]*"/g, '');
+        
         for (let i = 0; i < livePatterns.length; i++) {
             const pattern = livePatterns[i];
-            const matches = html.match(pattern);
+            const matches = htmlWithoutStyles.match(pattern);
             if (matches) {
                 foundPatterns.push(`Pattern ${i + 1}: ${pattern.toString()}`);
                 console.log(`✅ Found live indicator: ${pattern.toString()}`);
                 
                 // Show context around the match
-                const matchIndex = html.indexOf(matches[0]);
+                const matchIndex = htmlWithoutStyles.indexOf(matches[0]);
                 const start = Math.max(0, matchIndex - 100);
-                const end = Math.min(html.length, matchIndex + 100);
-                console.log(`🎯 Context: "${html.substring(start, end)}"`);
+                const end = Math.min(htmlWithoutStyles.length, matchIndex + 100);
+                console.log(`🎯 Context: "${htmlWithoutStyles.substring(start, end)}"`);
                 
-                detectedLive = true;
-                break; // Found live indicator, no need to check more
+                // Additional validation - make sure it's not in a CSS context
+                const contextBefore = htmlWithoutStyles.substring(Math.max(0, matchIndex - 200), matchIndex);
+                if (!contextBefore.includes('--ig-') && !contextBefore.includes('css') && !contextBefore.includes('style')) {
+                    detectedLive = true;
+                    break;
+                }
             }
         }
         
