@@ -5,6 +5,9 @@ const https = require('https');
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const DISCORD_CHANNEL_ID = process.env.DISCORD_CHANNEL_ID;
 const TARGET_USERNAME = process.env.TARGET_USERNAME;
+const IG_SESSION_ID = process.env.IG_SESSION_ID;
+const IG_CSRF_TOKEN = process.env.IG_CSRF_TOKEN;
+const IG_DS_USER_ID = process.env.IG_DS_USER_ID;
 
 // Discord client setup
 const client = new Client({ 
@@ -16,6 +19,7 @@ const client = new Client({
 });
 
 let isLiveNow = false;
+let cookiesValid = true;
 
 // Initialize Discord bot
 client.once('ready', () => {
@@ -24,9 +28,18 @@ client.once('ready', () => {
     console.log('- DISCORD_TOKEN:', DISCORD_TOKEN ? 'Set' : 'Missing');
     console.log('- DISCORD_CHANNEL_ID:', DISCORD_CHANNEL_ID || 'Missing');
     console.log('- TARGET_USERNAME:', TARGET_USERNAME || 'Missing');
+    console.log('- IG_SESSION_ID:', IG_SESSION_ID ? 'Set' : 'Missing');
+    console.log('- IG_CSRF_TOKEN:', IG_CSRF_TOKEN ? 'Set' : 'Missing');
+    console.log('- IG_DS_USER_ID:', IG_DS_USER_ID ? 'Set' : 'Missing');
     
     if (!TARGET_USERNAME || !DISCORD_CHANNEL_ID) {
         console.error('Missing required environment variables!');
+        return;
+    }
+    
+    if (!IG_SESSION_ID || !IG_CSRF_TOKEN || !IG_DS_USER_ID) {
+        console.error('Missing Instagram cookie environment variables!');
+        sendDiscordMessage('❌ Missing Instagram cookies! Please set IG_SESSION_ID, IG_CSRF_TOKEN, IG_DS_USER_ID');
         return;
     }
     
@@ -44,11 +57,24 @@ async function sendDiscordMessage(message) {
     }
 }
 
-// Make HTTP request
+// Make HTTP request with proper error handling
 function makeRequest(url, options = {}) {
     return new Promise((resolve, reject) => {
         const req = https.request(url, options, (res) => {
             let data = '';
+            
+            // Handle redirects
+            if (res.statusCode === 301 || res.statusCode === 302) {
+                console.log(`Redirect detected: ${res.statusCode} to ${res.headers.location}`);
+                resolve({
+                    statusCode: res.statusCode,
+                    headers: res.headers,
+                    data: '',
+                    redirectLocation: res.headers.location
+                });
+                return;
+            }
+            
             res.on('data', (chunk) => data += chunk);
             res.on('end', () => {
                 resolve({ 
@@ -68,197 +94,163 @@ function makeRequest(url, options = {}) {
     });
 }
 
-// Check live status with extensive debugging
+// Get Instagram headers with cookies
+function getInstagramHeaders() {
+    return {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'none',
+        'Cache-Control': 'max-age=0',
+        'Cookie': `sessionid=${IG_SESSION_ID}; csrftoken=${IG_CSRF_TOKEN}; ds_user_id=${IG_DS_USER_ID}; rur="CLN\\05462966\\0541759885160:01f75e646da28254a58b85c3a0b17e49dd5b2b73b5e4aee0d08a6a50fe1b0cd5c5b6b10e"`
+    };
+}
+
+// Check Instagram access and live status
 async function checkLiveStatus() {
     try {
-        console.log('🔍 Checking Instagram page for live indicators...');
+        console.log('🔍 Checking Instagram with cookies...');
         
         const url = `https://www.instagram.com/${TARGET_USERNAME}/`;
         const response = await makeRequest(url, {
             method: 'GET',
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.5',
-                'Accept-Encoding': 'gzip, deflate, br',
-                'Connection': 'keep-alive',
-                'Upgrade-Insecure-Requests': '1',
-                'Sec-Fetch-Dest': 'document',
-                'Sec-Fetch-Mode': 'navigate',
-                'Sec-Fetch-Site': 'none',
-                'Cache-Control': 'max-age=0'
-            }
+            headers: getInstagramHeaders()
         });
         
         console.log(`📊 Response status: ${response.statusCode}`);
         console.log(`📊 Content length: ${response.data.length} characters`);
         
+        // Handle redirects (likely means cookies expired)
+        if (response.statusCode === 301 || response.statusCode === 302) {
+            console.log(`❌ Redirect detected to: ${response.redirectLocation}`);
+            if (response.redirectLocation && response.redirectLocation.includes('accounts/login')) {
+                console.log('🚨 Redirected to login page - cookies expired!');
+                cookiesValid = false;
+                await sendDiscordMessage('🚨 Instagram cookies expired! Please update IG_SESSION_ID, IG_CSRF_TOKEN, and IG_DS_USER_ID environment variables.');
+                return false;
+            }
+        }
+        
         if (response.statusCode !== 200) {
-            console.log(`❌ Instagram page returned status: ${response.statusCode}`);
+            console.log(`❌ Unexpected status code: ${response.statusCode}`);
             return false;
         }
         
         const html = response.data;
         
-        // Debug: Show first 1000 characters of HTML
-        console.log('📄 HTML Preview (first 1000 chars):');
-        console.log(html.substring(0, 1000));
-        console.log('📄 End of HTML preview');
+        // Check if we got actual profile content
+        if (html.includes('accounts/login') || html.includes('Log in to Instagram')) {
+            console.log('❌ Received login page despite using cookies');
+            cookiesValid = false;
+            await sendDiscordMessage('🚨 Instagram cookies invalid! Got login page despite using cookies.');
+            return false;
+        }
         
-        // Expanded live indicators
-        const liveIndicators = [
-            // Broadcast status indicators
-            'broadcast_status":"active"',
-            '"broadcast_status":"active"',
-            'broadcastStatus":"active"',
+        console.log('✅ Successfully accessed Instagram profile page');
+        console.log('📄 HTML Preview (first 500 chars):');
+        console.log(html.substring(0, 500));
+        
+        // Enhanced live detection patterns
+        const livePatterns = [
+            // Direct broadcast status
+            /"broadcast_status":"active"/,
+            /"broadcast":{"broadcast_status":"active"/,
+            /broadcastStatus":"active"/,
             
             // Live flags
-            '"is_live":true',
-            '"isLive":true',
-            'is_live":true',
-            'isLive":true',
+            /"is_live":true/,
+            /"isLive":true/,
             
             // Live UI elements
-            'ig-live-badge',
-            'live-video-indicator',
-            'live-badge',
-            'LIVE</span>',
-            'Live</span>',
-            'aria-label="Live"',
-            'aria-label="LIVE"',
-            'class="live"',
+            /ig-live-badge/,
+            /live-video-indicator/,
+            /aria-label="Live"/i,
+            /<span[^>]*>LIVE<\/span>/i,
+            /class="[^"]*live[^"]*"/i,
+            
+            // GraphQL live video type
+            /"__typename":"GraphLiveVideo"/,
+            /GraphLiveVideo/,
+            
+            // Media type 4 (live video)
+            /"media_type":4/,
             
             // Story live indicators
-            'story_type":"live"',
-            'storyType":"live"',
-            '"story_type":"live"',
-            '"storyType":"live"',
+            /"story_type":"live"/,
             
-            // GraphQL types
-            '"__typename":"GraphLiveVideo"',
-            '__typename":"GraphLiveVideo"',
-            'GraphLiveVideo',
-            
-            // Media types
-            'media_type":4',
-            '"media_type":4',
-            'mediaType":4',
-            '"mediaType":4',
-            
-            // Additional patterns
-            'broadcast":{"',
-            '"broadcast":{',
-            'live_video_id',
-            'liveVideoId',
-            'dash_live_encodings',
-            'broadcast_owner',
-            'viewer_count'
+            // Broadcast data
+            /broadcast_owner/,
+            /dash_live_encodings/,
+            /live_video_id/,
+            /viewer_count.*broadcast/
         ];
         
-        console.log('🔎 Checking for live indicators...');
-        let foundIndicators = [];
+        console.log('🔎 Scanning for live indicators...');
+        let foundPatterns = [];
+        let detectedLive = false;
         
-        for (const indicator of liveIndicators) {
-            if (html.includes(indicator)) {
-                foundIndicators.push(indicator);
-                console.log(`✅ Found indicator: "${indicator}"`);
+        for (let i = 0; i < livePatterns.length; i++) {
+            const pattern = livePatterns[i];
+            const matches = html.match(pattern);
+            if (matches) {
+                foundPatterns.push(`Pattern ${i + 1}: ${pattern.toString()}`);
+                console.log(`✅ Found live indicator: ${pattern.toString()}`);
+                
+                // Show context around the match
+                const matchIndex = html.indexOf(matches[0]);
+                const start = Math.max(0, matchIndex - 100);
+                const end = Math.min(html.length, matchIndex + 100);
+                console.log(`🎯 Context: "${html.substring(start, end)}"`);
+                
+                detectedLive = true;
+                break; // Found live indicator, no need to check more
             }
         }
         
-        if (foundIndicators.length > 0) {
-            console.log(`🎉 LIVE DETECTED! Found ${foundIndicators.length} indicators:`, foundIndicators);
+        if (detectedLive) {
+            console.log(`🔴 LIVE DETECTED! Found patterns: ${foundPatterns.length}`);
             return true;
         }
         
-        // Check for window._sharedData
-        console.log('🔍 Checking window._sharedData...');
-        const sharedDataMatches = html.match(/window\._sharedData\s*=\s*({.*?});/s);
-        if (sharedDataMatches) {
-            console.log('📦 Found _sharedData, checking for live status...');
+        // Additional check: Look for window._sharedData
+        const sharedDataMatch = html.match(/window\._sharedData\s*=\s*({.*?});/s);
+        if (sharedDataMatch) {
+            console.log('📦 Found window._sharedData, parsing...');
             try {
-                const sharedData = JSON.parse(sharedDataMatches[1]);
-                console.log('📦 Shared data keys:', Object.keys(sharedData));
+                const sharedData = JSON.parse(sharedDataMatch[1]);
+                const profilePage = sharedData?.entry_data?.ProfilePage?.[0];
+                const user = profilePage?.graphql?.user;
                 
-                const user = sharedData?.entry_data?.ProfilePage?.[0]?.graphql?.user;
                 if (user) {
-                    console.log('👤 User data found in shared data');
+                    console.log(`👤 Found user data for: ${user.username}`);
+                    
+                    // Check broadcast in user data
                     if (user.broadcast) {
-                        console.log('📡 Broadcast data:', JSON.stringify(user.broadcast, null, 2));
+                        console.log('📡 Broadcast data found:', JSON.stringify(user.broadcast, null, 2));
                         if (user.broadcast.broadcast_status === 'active') {
-                            console.log('✅ LIVE detected via shared data broadcast!');
+                            console.log('🔴 LIVE detected via _sharedData broadcast!');
                             return true;
                         }
                     }
-                    if (user.is_live) {
-                        console.log('✅ LIVE detected via shared data is_live flag!');
+                    
+                    if (user.is_live === true) {
+                        console.log('🔴 LIVE detected via _sharedData is_live flag!');
                         return true;
                     }
-                } else {
-                    console.log('❌ No user data in shared data');
+                    
+                    console.log('📊 User live status: false');
                 }
             } catch (e) {
-                console.log('❌ Could not parse shared data:', e.message);
+                console.log('❌ Failed to parse _sharedData:', e.message);
             }
-        } else {
-            console.log('❌ No _sharedData found');
         }
         
-        // Check for JSON script tags
-        console.log('🔍 Checking JSON script tags...');
-        const scriptMatches = html.match(/<script type="application\/json"[^>]*data-content-len="[^"]*"[^>]*>([^<]*)<\/script>/g);
-        if (scriptMatches && scriptMatches.length > 0) {
-            console.log(`📦 Found ${scriptMatches.length} JSON script tags`);
-            
-            for (let i = 0; i < scriptMatches.length; i++) {
-                const scriptMatch = scriptMatches[i];
-                const jsonMatch = scriptMatch.match(/>([^<]*)</);
-                if (jsonMatch) {
-                    try {
-                        const jsonData = JSON.parse(jsonMatch[1]);
-                        const jsonString = JSON.stringify(jsonData);
-                        
-                        console.log(`📄 Script ${i + 1} length: ${jsonString.length} chars`);
-                        
-                        if (jsonString.includes('broadcast_status":"active"') || 
-                            jsonString.includes('"is_live":true') ||
-                            jsonString.includes('GraphLiveVideo') ||
-                            jsonString.includes('media_type":4')) {
-                            console.log(`✅ LIVE detected in JSON script ${i + 1}!`);
-                            console.log('🎯 Relevant JSON snippet:', jsonString.substring(jsonString.indexOf('broadcast') - 100, jsonString.indexOf('broadcast') + 200));
-                            return true;
-                        }
-                    } catch (e) {
-                        console.log(`❌ Could not parse JSON script ${i + 1}:`, e.message);
-                    }
-                }
-            }
-        } else {
-            console.log('❌ No JSON script tags found');
-        }
-        
-        // Check for any "live" related text
-        console.log('🔍 Searching for any "live" mentions...');
-        const liveRegex = /live/gi;
-        const liveMatches = html.match(liveRegex);
-        if (liveMatches) {
-            console.log(`📊 Found ${liveMatches.length} mentions of "live" in the page`);
-            // Show context around first few matches
-            const liveIndices = [];
-            let match;
-            const regex = /live/gi;
-            let count = 0;
-            while ((match = regex.exec(html)) !== null && count < 5) {
-                liveIndices.push(match.index);
-                const start = Math.max(0, match.index - 50);
-                const end = Math.min(html.length, match.index + 50);
-                console.log(`📄 Live context ${count + 1}: "${html.substring(start, end)}"`);
-                count++;
-            }
-        } else {
-            console.log('❌ No mentions of "live" found in the page');
-        }
-        
-        console.log('❌ No live stream detected after extensive search');
+        console.log('❌ No live indicators found');
         return false;
         
     } catch (error) {
@@ -269,8 +261,8 @@ async function checkLiveStatus() {
 
 // Main monitoring loop
 async function startMonitoring() {
-    console.log(`🚀 Starting Instagram Live monitoring for @${TARGET_USERNAME} (Debug Version)`);
-    await sendDiscordMessage(`🤖 Instagram Live Monitor started for @${TARGET_USERNAME} (Debug Version - Extensive Logging)`);
+    console.log(`🚀 Starting Instagram Live monitoring for @${TARGET_USERNAME} (Cookies Version)`);
+    await sendDiscordMessage(`🤖 Instagram Live Monitor started for @${TARGET_USERNAME} (Using Instagram Cookies)`);
     
     // Initial check
     console.log('🔎 Performing initial live status check...');
@@ -280,15 +272,20 @@ async function startMonitoring() {
         if (initialStatus) {
             await sendDiscordMessage(`🔴 @${TARGET_USERNAME} is currently LIVE on Instagram! https://www.instagram.com/${TARGET_USERNAME}/`);
         } else {
-            console.log('✅ Initial check complete - not currently live (according to our detection)');
+            console.log('✅ Initial check complete - not currently live');
         }
     } catch (error) {
         console.error('❌ Initial check failed:', error);
     }
     
-    // Monitor every 2 minutes for testing (more frequent)
-    console.log('⏰ Starting monitoring loop (every 2 minutes for debugging)...');
+    // Monitor every minute
+    console.log('⏰ Starting monitoring loop (every 60 seconds)...');
     setInterval(async () => {
+        if (!cookiesValid) {
+            console.log('⏭️ Skipping check - cookies invalid');
+            return;
+        }
+        
         try {
             console.log('\n🔄 --- Starting new check cycle ---');
             const currentlyLive = await checkLiveStatus();
@@ -311,11 +308,11 @@ async function startMonitoring() {
         } catch (error) {
             console.error('❌ Error in monitoring loop:', error);
         }
-    }, 2 * 60 * 1000); // Check every 2 minutes for debugging
+    }, 60 * 1000); // Check every minute
     
     // Keep alive heartbeat
     setInterval(() => {
-        console.log(`💓 Bot heartbeat - monitoring @${TARGET_USERNAME} | Status: ${isLiveNow ? '🔴 LIVE' : '⚫ Offline'} | Time: ${new Date().toISOString()}`);
+        console.log(`💓 Bot heartbeat - monitoring @${TARGET_USERNAME} | Live: ${isLiveNow ? '🔴' : '⚫'} | Cookies: ${cookiesValid ? '✅' : '❌'} | ${new Date().toISOString()}`);
     }, 10 * 60 * 1000); // Every 10 minutes
 }
 
