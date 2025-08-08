@@ -229,91 +229,204 @@ async function checkLiveStatus() {
         }
         
         const html = response.data;
+        console.log(`📊 HTML length: ${html.length} characters`);
+        
+        // Debug: Show HTML snippets around potential live indicators
+        console.log('\n🔍 DEBUG: Searching for key terms in HTML...');
+        
+        // Search for common live indicators in the HTML
+        const debugTerms = ['live', 'LIVE', '直播', 'broadcast', 'streaming', 'is_live', 'broadcast_status'];
+        for (const term of debugTerms) {
+            const index = html.toLowerCase().indexOf(term.toLowerCase());
+            if (index !== -1) {
+                const start = Math.max(0, index - 100);
+                const end = Math.min(html.length, index + 100);
+                const snippet = html.substring(start, end);
+                console.log(`🔍 Found "${term}" at position ${index}:`);
+                console.log(`   Context: "${snippet.replace(/\s+/g, ' ')}"`);
+            }
+        }
         
         // Method 1: Check window._sharedData
-        console.log('🔎 Method 1: Checking window._sharedData...');
+        console.log('\n🔎 Method 1: Checking window._sharedData...');
         const sharedDataMatches = html.match(/window\._sharedData\s*=\s*({.*?});/s);
         if (sharedDataMatches) {
             try {
                 const sharedData = JSON.parse(sharedDataMatches[1]);
+                console.log('📦 Found _sharedData, analyzing...');
+                
+                // Debug: Show the structure
                 const profilePage = sharedData?.entry_data?.ProfilePage?.[0];
                 const user = profilePage?.graphql?.user;
                 
                 if (user) {
-                    if (user.broadcast && user.broadcast.broadcast_status === 'active') {
-                        console.log('🔴 LIVE detected via _sharedData broadcast!');
-                        return true;
+                    console.log(`👤 User found: ${user.username || 'unknown'}`);
+                    console.log(`📊 User data keys: ${Object.keys(user).slice(0, 10).join(', ')}...`);
+                    
+                    // Check broadcast data
+                    if (user.broadcast) {
+                        console.log(`📡 Broadcast data:`, JSON.stringify(user.broadcast, null, 2));
+                        if (user.broadcast.broadcast_status === 'active') {
+                            console.log('🔴 LIVE detected via _sharedData broadcast!');
+                            return true;
+                        }
+                    } else {
+                        console.log('📡 No broadcast data found');
                     }
                     
+                    // Check is_live flag
+                    console.log(`🔴 is_live flag: ${user.is_live}`);
                     if (user.is_live === true) {
                         console.log('🔴 LIVE detected via _sharedData is_live!');
                         return true;
                     }
+                    
+                    // Check for additional live indicators
+                    const liveFields = ['live_broadcast_id', 'broadcast_message', 'live_badge_text'];
+                    for (const field of liveFields) {
+                        if (user[field]) {
+                            console.log(`🔴 Found live indicator: ${field} = ${user[field]}`);
+                            return true;
+                        }
+                    }
+                } else {
+                    console.log('❌ No user data found in _sharedData');
                 }
             } catch (e) {
                 console.log('❌ Failed to parse _sharedData:', e.message);
             }
+        } else {
+            console.log('❌ No _sharedData found');
         }
         
-        // Method 2: Check JSON script tags
-        console.log('🔎 Method 2: Checking JSON script tags...');
+        // Method 2: Check JSON script tags (more thorough)
+        console.log('\n🔎 Method 2: Checking JSON script tags...');
         const jsonScriptRegex = /<script type="application\/json"[^>]*>([^<]*)<\/script>/g;
         let jsonScriptMatch;
         let scriptCount = 0;
         
-        while ((jsonScriptMatch = jsonScriptRegex.exec(html)) !== null && scriptCount < 10) {
+        while ((jsonScriptMatch = jsonScriptRegex.exec(html)) !== null && scriptCount < 20) {
             scriptCount++;
             try {
                 const jsonContent = JSON.parse(jsonScriptMatch[1]);
                 const jsonString = JSON.stringify(jsonContent);
                 
+                console.log(`📄 JSON Script ${scriptCount}: ${jsonString.length} chars`);
+                
+                // Enhanced live detection patterns
                 const liveJsonPatterns = [
-                    'broadcast_status":"active"',
+                    'broadcast_status":"active',
                     '"is_live":true',
-                    '"__typename":"GraphLiveVideo"',
+                    '"__typename":"GraphLiveVideo',
+                    '"__typename":"XDTLiveVideo',
                     'GraphLiveVideo',
-                    '"media_type":4'
+                    '"media_type":4',
+                    '"broadcast_id":',
+                    'live_badge',
+                    'live_broadcast',
+                    'broadcast_message',
+                    'live_status":"active',
+                    '"is_broadcasting":true',
+                    '"live_viewer_count":'
                 ];
                 
                 for (const pattern of liveJsonPatterns) {
                     if (jsonString.includes(pattern)) {
                         console.log(`🔴 LIVE detected in JSON script ${scriptCount}: ${pattern}`);
+                        
+                        // Show context
+                        const index = jsonString.indexOf(pattern);
+                        const context = jsonString.substring(Math.max(0, index - 200), index + 200);
+                        console.log(`🎯 Context: ${context}`);
                         return true;
                     }
                 }
                 
             } catch (e) {
-                // Skip invalid JSON
+                // Skip invalid JSON, but log size
+                console.log(`📄 JSON Script ${scriptCount}: Invalid JSON (${jsonScriptMatch[1].length} chars)`);
             }
         }
         
-        // Method 3: Search for live badge HTML
-        console.log('🔎 Method 3: Checking for live badge...');
+        console.log(`📊 Checked ${scriptCount} JSON scripts`);
+        
+        // Method 3: Search for live badge HTML (more patterns)
+        console.log('\n🔎 Method 3: Checking for live badge HTML...');
         
         const liveBadgePatterns = [
-            /直播/i,
-            /<span[^>]*>LIVE<\/span>/i,
-            /<div[^>]*live[^>]*>/i,
-            /style="[^"]*border:\s*2px\s+solid[^"]*"[^>]*>(?:直播|LIVE)<\/span>/i
+            // Chinese patterns
+            /直播/gi,
+            /現在直播中/gi,
+            
+            // English patterns
+            /<span[^>]*>LIVE<\/span>/gi,
+            /<div[^>]*>LIVE<\/div>/gi,
+            /\bLIVE\b/gi,
+            
+            // HTML structure patterns
+            /<div[^>]*live[^>]*>/gi,
+            /<span[^>]*live[^>]*>/gi,
+            /class="[^"]*live[^"]*"/gi,
+            
+            // Style patterns
+            /style="[^"]*border:\s*2px\s+solid[^"]*"[^>]*>(?:直播|LIVE)/gi,
+            /background.*rgb\(255,\s*1,\s*105\)/gi, // Instagram live red
         ];
         
-        for (const pattern of liveBadgePatterns) {
-            if (html.match(pattern)) {
-                console.log(`🔴 LIVE detected via badge pattern!`);
+        for (let i = 0; i < liveBadgePatterns.length; i++) {
+            const pattern = liveBadgePatterns[i];
+            const matches = html.match(pattern);
+            if (matches) {
+                console.log(`🔴 LIVE detected via badge pattern ${i + 1}: Found ${matches.length} matches`);
+                console.log(`🎯 First match: "${matches[0]}"`);
+                
+                // Show context for the first match
+                const index = html.indexOf(matches[0]);
+                const context = html.substring(Math.max(0, index - 200), index + 200);
+                console.log(`🎯 Context: "${context.replace(/\s+/g, ' ')}"`);
                 return true;
             }
         }
         
         // Method 4: Check page title
+        console.log('\n🔎 Method 4: Checking page title...');
         const titleMatch = html.match(/<title[^>]*>([^<]*)<\/title>/i);
         const pageTitle = titleMatch ? titleMatch[1] : '';
+        console.log(`📋 Page title: "${pageTitle}"`);
         
         if (pageTitle.toLowerCase().includes('live')) {
             console.log('🔴 LIVE detected in page title!');
             return true;
         }
         
-        console.log('❌ No live indicators found');
+        // Method 5: Search for story indicators (lives often appear as stories)
+        console.log('\n🔎 Method 5: Checking for story/live indicators...');
+        const storyPatterns = [
+            /story.*live/gi,
+            /live.*story/gi,
+            /story_ring.*live/gi,
+            /broadcast.*story/gi
+        ];
+        
+        for (const pattern of storyPatterns) {
+            const matches = html.match(pattern);
+            if (matches) {
+                // Filter out CSS variables
+                const validMatches = matches.filter(match => !match.includes('--') && !match.includes('border-radius'));
+                if (validMatches.length > 0) {
+                    console.log(`🔴 LIVE detected via story pattern: ${validMatches[0]}`);
+                    return true;
+                }
+            }
+        }
+        
+        console.log('\n❌ No live indicators found through any method');
+        
+        // Debug: Save a snippet of the HTML for manual inspection
+        console.log('\n🔍 DEBUG: HTML structure analysis...');
+        const htmlPreview = html.substring(0, 1000).replace(/\s+/g, ' ');
+        console.log(`📄 HTML Preview: ${htmlPreview}`);
+        
         return false;
         
     } catch (error) {
