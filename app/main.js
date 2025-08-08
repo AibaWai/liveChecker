@@ -20,6 +20,7 @@ const client = new Client({
 });
 
 let isLiveNow = false;
+let userId = null;
 
 // Initialize Discord bot
 client.once('ready', () => {
@@ -118,8 +119,24 @@ function makeRequest(url, options = {}) {
     });
 }
 
-// Get Instagram headers with cookies
-function getInstagramHeaders() {
+// Get Instagram API headers
+function getInstagramAPIHeaders() {
+    return {
+        'User-Agent': 'Instagram 219.0.0.12.117 Android',
+        'Accept': '*/*',
+        'Accept-Language': 'zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Connection': 'keep-alive',
+        'X-IG-App-ID': '936619743392459',
+        'X-Instagram-AJAX': '1',
+        'X-CSRFToken': IG_CSRF_TOKEN,
+        'X-Requested-With': 'XMLHttpRequest',
+        'Cookie': `sessionid=${IG_SESSION_ID}; csrftoken=${IG_CSRF_TOKEN}; ds_user_id=${IG_DS_USER_ID}`
+    };
+}
+
+// Get web headers for profile page
+function getWebHeaders() {
     return {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
@@ -130,301 +147,247 @@ function getInstagramHeaders() {
         'Sec-Fetch-Dest': 'document',
         'Sec-Fetch-Mode': 'navigate',
         'Sec-Fetch-Site': 'none',
+        'Sec-CH-UA': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+        'Sec-CH-UA-Mobile': '?0',
+        'Sec-CH-UA-Platform': '"Windows"',
         'Cache-Control': 'max-age=0',
-        'Cookie': `sessionid=${IG_SESSION_ID}; csrftoken=${IG_CSRF_TOKEN}; ds_user_id=${IG_DS_USER_ID}; rur="CLN\\05462966\\0541759885160:01f75e646da28254a58b85c3a0b17e49dd5b2b73b5e4aee0d08a6a50fe1b0cd5c5b6b10e"`
+        'Cookie': `sessionid=${IG_SESSION_ID}; csrftoken=${IG_CSRF_TOKEN}; ds_user_id=${IG_DS_USER_ID}; mid=ZnH2YAAEAAFONwllOTI_7qW3kJMY`
     };
 }
 
-// Verify Instagram login
-async function verifyInstagramLogin() {
+// Get user ID from username
+async function getUserId() {
+    if (userId) return userId;
+    
     try {
-        console.log('🔍 Verifying Instagram login...');
+        console.log(`🔍 Getting user ID for @${TARGET_USERNAME}...`);
         
-        const url = `https://www.instagram.com/${TARGET_USERNAME}/`;
+        // Try to get user ID from profile page
+        const url = `https://www.instagram.com/api/v1/users/web_profile_info/?username=${TARGET_USERNAME}`;
         const response = await makeRequest(url, {
             method: 'GET',
-            headers: getInstagramHeaders()
+            headers: getInstagramAPIHeaders()
         });
         
-        // Handle redirects (likely means cookies expired)
-        if (response.statusCode === 301 || response.statusCode === 302) {
-            if (response.redirectLocation && response.redirectLocation.includes('accounts/login')) {
-                console.log('🚨 Redirected to login page - cookies expired!');
-                return false;
+        if (response.statusCode === 200) {
+            try {
+                const data = JSON.parse(response.data);
+                if (data.data && data.data.user && data.data.user.id) {
+                    userId = data.data.user.id;
+                    console.log(`✅ Found user ID: ${userId}`);
+                    return userId;
+                }
+            } catch (e) {
+                console.log('❌ Failed to parse user profile API response');
             }
         }
         
-        if (response.statusCode !== 200) {
-            console.log(`❌ Unexpected status code: ${response.statusCode}`);
-            return false;
+        // Fallback: try to extract from HTML
+        const profileUrl = `https://www.instagram.com/${TARGET_USERNAME}/`;
+        const profileResponse = await makeRequest(profileUrl, {
+            method: 'GET',
+            headers: getWebHeaders()
+        });
+        
+        if (profileResponse.statusCode === 200) {
+            const html = profileResponse.data;
+            
+            // Try to find user ID in various places
+            const userIdPatterns = [
+                /"profile_id":"(\d+)"/,
+                /"id":"(\d+)"/,
+                /"owner":{"id":"(\d+)"/,
+                /"profilePage_\d+".*?"user":{"id":"(\d+)"/
+            ];
+            
+            for (const pattern of userIdPatterns) {
+                const match = html.match(pattern);
+                if (match && match[1]) {
+                    userId = match[1];
+                    console.log(`✅ Extracted user ID from HTML: ${userId}`);
+                    return userId;
+                }
+            }
         }
         
-        const html = response.data;
-        
-        // Check if we got login page
-        if (html.includes('accounts/login') || html.includes('Log in to Instagram')) {
-            console.log('❌ Received login page despite using cookies');
-            return false;
-        }
-        
-        console.log('✅ Successfully accessed Instagram profile page');
-        return true;
+        console.log('❌ Could not find user ID');
+        return null;
         
     } catch (error) {
-        console.error('❌ Error verifying login:', error);
-        return false;
+        console.error('❌ Error getting user ID:', error);
+        return null;
     }
 }
 
-// DEBUG: Enhanced live status check with full HTML analysis
+// Check live status using multiple methods
 async function checkLiveStatus() {
     try {
         console.log(`🔍 Checking if @${TARGET_USERNAME} is live...`);
         
-        const url = `https://www.instagram.com/${TARGET_USERNAME}/`;
-        const response = await makeRequest(url, {
-            method: 'GET',
-            headers: getInstagramHeaders()
-        });
-        
-        if (response.statusCode !== 200) {
-            console.log(`❌ HTTP ${response.statusCode}`);
-            return false;
+        // Method 1: Try Instagram API approach
+        const currentUserId = await getUserId();
+        if (currentUserId) {
+            console.log('🔎 Method 1: Checking via Instagram API...');
+            
+            // Try to get live broadcast info
+            const apiEndpoints = [
+                `https://www.instagram.com/api/v1/live/${currentUserId}/info/`,
+                `https://www.instagram.com/api/v1/users/${currentUserId}/info/`,
+                `https://i.instagram.com/api/v1/users/${currentUserId}/info/`
+            ];
+            
+            for (const endpoint of apiEndpoints) {
+                try {
+                    const response = await makeRequest(endpoint, {
+                        method: 'GET',
+                        headers: getInstagramAPIHeaders()
+                    });
+                    
+                    if (response.statusCode === 200) {
+                        console.log(`📊 API Response from ${endpoint}: ${response.data.substring(0, 200)}...`);
+                        
+                        const data = JSON.parse(response.data);
+                        
+                        // Check for live indicators in API response
+                        const liveIndicators = [
+                            'is_live',
+                            'broadcast_status',
+                            'live_broadcast',
+                            'broadcast_id'
+                        ];
+                        
+                        const jsonStr = JSON.stringify(data);
+                        for (const indicator of liveIndicators) {
+                            if (jsonStr.includes(indicator)) {
+                                console.log(`🔍 Found live indicator in API: ${indicator}`);
+                                
+                                if (jsonStr.includes('"is_live":true') || 
+                                    jsonStr.includes('"broadcast_status":"active"')) {
+                                    console.log('🔴 LIVE detected via API!');
+                                    return true;
+                                }
+                            }
+                        }
+                    }
+                } catch (e) {
+                    console.log(`❌ API call failed for ${endpoint}: ${e.message}`);
+                }
+            }
         }
         
-        const html = response.data;
-        console.log(`📊 HTML length: ${html.length} characters`);
+        // Method 2: Enhanced HTML parsing with JavaScript simulation
+        console.log('🔎 Method 2: Enhanced HTML parsing...');
         
-        // DEBUG: Show actual HTML content around profile area
-        console.log('\n🔍 === DEBUG: HTML CONTENT ANALYSIS ===');
+        const profileUrl = `https://www.instagram.com/${TARGET_USERNAME}/`;
+        const response = await makeRequest(profileUrl, {
+            method: 'GET',
+            headers: {
+                ...getWebHeaders(),
+                // Try to simulate a real browser more closely
+                'Sec-Fetch-User': '?1',
+                'Upgrade-Insecure-Requests': '1'
+            }
+        });
         
-        // Look for the specific div class you found
-        console.log('🔍 Searching for live badge div with specific classes...');
-        const liveBadgePatterns = [
-            // Exact class pattern you found
-            /<div[^>]*class="[^"]*x6s0dn4[^"]*x78zum5[^"]*xl56j7k[^"]*x10l6tqk[^"]*xh8yej3[^"]*x1xtax4o[^"]*"[^>]*>[\s\S]*?<\/div>/gi,
+        if (response.statusCode === 200) {
+            const html = response.data;
+            console.log(`📊 HTML length: ${html.length} characters`);
             
-            // More flexible patterns
-            /<div[^>]*x6s0dn4[^>]*x78zum5[^>]*xl56j7k[^>]*>[\s\S]*?<\/div>/gi,
-            /<div[^>]*x6s0dn4[^>]*>[\s\S]*?直播[\s\S]*?<\/div>/gi,
+            // Look for embedded JSON data that might contain live status
+            console.log('🔍 Searching for embedded JSON with live data...');
             
-            // Any div containing the specific classes
-            /<div[^>]*x6s0dn4[^"]*x78zum5[^"]*xl56j7k[^"]*x10l6tqk[^"]*xh8yej3[^"]*x1xtax4o[^>]*>/gi
-        ];
-        
-        for (let i = 0; i < liveBadgePatterns.length; i++) {
-            const pattern = liveBadgePatterns[i];
-            const matches = html.match(pattern);
-            
-            if (matches) {
-                console.log(`🔍 Found ${matches.length} div(s) matching pattern ${i + 1}`);
-                
-                // Check first few matches
-                for (let j = 0; j < Math.min(matches.length, 3); j++) {
-                    const match = matches[j];
-                    console.log(`📋 Div ${j + 1} content (first 300 chars): ${match.substring(0, 300).replace(/\s+/g, ' ')}`);
+            // Pattern 1: Look for window._sharedData
+            const sharedDataMatch = html.match(/window\._sharedData\s*=\s*({.*?});/s);
+            if (sharedDataMatch) {
+                try {
+                    const sharedData = JSON.parse(sharedDataMatch[1]);
+                    console.log('📦 Found _sharedData');
                     
-                    // Check if this div contains "直播"
-                    if (match.includes('直播')) {
-                        console.log(`🔴 FOUND "直播" IN DIV ${j + 1}!`);
+                    const jsonStr = JSON.stringify(sharedData);
+                    
+                    if (jsonStr.includes('"is_live":true') ||
+                        jsonStr.includes('"broadcast_status":"active"') ||
+                        jsonStr.includes('"__typename":"GraphLiveVideo"')) {
+                        console.log('🔴 LIVE detected in _sharedData!');
+                        return true;
+                    }
+                } catch (e) {
+                    console.log('❌ Failed to parse _sharedData');
+                }
+            }
+            
+            // Pattern 2: Look for JSON in script tags
+            const scriptMatches = html.match(/<script[^>]*>.*?({.*?"is_live".*?}.*?)<\/script>/gs);
+            if (scriptMatches) {
+                console.log(`📦 Found ${scriptMatches.length} scripts with is_live`);
+                
+                for (const script of scriptMatches.slice(0, 3)) {
+                    if (script.includes('"is_live":true')) {
+                        console.log('🔴 LIVE detected in script tag!');
+                        return true;
+                    }
+                }
+            }
+            
+            // Pattern 3: Look for live badge in any language
+            const liveBadgePatterns = [
+                /直播/g,
+                /LIVE/g,
+                /live/g,
+                /En vivo/g,
+                /Live/g,
+                /在線/g,
+                /ライブ/g
+            ];
+            
+            for (const pattern of liveBadgePatterns) {
+                const matches = html.match(pattern);
+                if (matches) {
+                    // Filter out CSS and script false positives
+                    const validMatches = matches.filter(match => {
+                        const context = html.substring(
+                            html.indexOf(match) - 50,
+                            html.indexOf(match) + 50
+                        );
+                        return !context.includes('--ig-live') && 
+                               !context.includes('css') &&
+                               !context.includes('script') &&
+                               context.includes('<');
+                    });
+                    
+                    if (validMatches.length > 0) {
+                        console.log(`🔴 LIVE detected via badge: ${validMatches[0]}`);
                         return true;
                     }
                 }
             }
         }
         
-        // Look for header section specifically
-        const headerMatch = html.match(/<header[^>]*>[\s\S]*?<\/header>/i);
-        if (headerMatch) {
-            const headerContent = headerMatch[0];
-            console.log(`📋 Found header section (${headerContent.length} chars)`);
-            
-            // Check if header contains "直播"
-            if (headerContent.includes('直播')) {
-                console.log('🔴 FOUND "直播" IN HEADER!');
-                
-                // Show exact context
-                const liveIndex = headerContent.indexOf('直播');
-                const context = headerContent.substring(Math.max(0, liveIndex - 200), liveIndex + 200);
-                console.log(`🎯 "直播" context: ${context.replace(/\s+/g, ' ')}`);
-                return true;
-            } else {
-                console.log('❌ No "直播" found in header');
-            }
-        } else {
-            console.log('❌ No header section found');
-        }
-        
-        // Search for ANY div with x6s0dn4 class (to see if we're getting the right structure)
-        console.log('\n🔍 Searching for ANY div with x6s0dn4 class...');
-        const x6s0dn4Pattern = /<div[^>]*x6s0dn4[^>]*>/gi;
-        const x6s0dn4Matches = html.match(x6s0dn4Pattern);
-        
-        if (x6s0dn4Matches) {
-            console.log(`📊 Found ${x6s0dn4Matches.length} divs with x6s0dn4 class`);
-            
-            // Show first few matches
-            for (let i = 0; i < Math.min(x6s0dn4Matches.length, 5); i++) {
-                console.log(`   ${i + 1}. ${x6s0dn4Matches[i].substring(0, 200)}`);
-            }
-        } else {
-            console.log('❌ No divs with x6s0dn4 class found - different page structure!');
-        }
-        
-        // DEBUG: Search for any occurrence of "直播" in entire HTML
-        console.log('\n🔍 Searching entire HTML for "直播"...');
-        const allLiveMatches = [];
-        let searchIndex = 0;
-        
-        while (true) {
-            const liveIndex = html.indexOf('直播', searchIndex);
-            if (liveIndex === -1) break;
-            
-            const context = html.substring(Math.max(0, liveIndex - 100), liveIndex + 100);
-            allLiveMatches.push({
-                position: liveIndex,
-                context: context.replace(/\s+/g, ' ')
-            });
-            
-            searchIndex = liveIndex + 1;
-        }
-        
-        console.log(`📊 Found ${allLiveMatches.length} occurrences of "直播" in HTML`);
-        
-        for (let i = 0; i < Math.min(allLiveMatches.length, 5); i++) {
-            const match = allLiveMatches[i];
-            console.log(`   ${i + 1}. Position ${match.position}: "${match.context}"`);
-        }
-        
-        if (allLiveMatches.length > 0) {
-            console.log('🔴 FOUND "直播" IN HTML - USER IS LIVE!');
-            return true;
-        }
-        
-        // DEBUG: Search for common live-related terms
-        console.log('\n🔍 Searching for other live indicators...');
-        const liveTerms = ['LIVE', 'live', 'broadcast', '直播中', '現在直播', 'streaming'];
-        
-        for (const term of liveTerms) {
-            const termIndex = html.indexOf(term);
-            if (termIndex !== -1) {
-                const context = html.substring(Math.max(0, termIndex - 100), termIndex + 100);
-                console.log(`🔍 Found "${term}" at position ${termIndex}: "${context.replace(/\s+/g, ' ').substring(0, 200)}"`);
-            }
-        }
-        
-        // DEBUG: Show profile username area
-        console.log('\n🔍 Looking for profile username area...');
-        const usernamePattern = new RegExp(`${TARGET_USERNAME}`, 'gi');
-        const usernameMatches = html.match(usernamePattern);
-        if (usernameMatches) {
-            console.log(`📊 Found ${usernameMatches.length} mentions of username`);
-            
-            // Find the first username mention and show context
-            const firstUsernameIndex = html.indexOf(TARGET_USERNAME);
-            const usernameContext = html.substring(Math.max(0, firstUsernameIndex - 500), firstUsernameIndex + 500);
-            console.log(`📋 Username context: ${usernameContext.replace(/\s+/g, ' ').substring(0, 800)}`);
-        }
-        
-        // DEBUG: Look for span elements that might contain live indicators
-        console.log('\n🔍 Analyzing span elements...');
-        const spanRegex = /<span[^>]*>([^<]+)<\/span>/gi;
-        let spanMatch;
-        let spanCount = 0;
-        
-        while ((spanMatch = spanRegex.exec(html)) !== null && spanCount < 20) {
-            spanCount++;
-            const spanContent = spanMatch[1].trim();
-            
-            if (spanContent.includes('直播') || spanContent.includes('LIVE') || spanContent.includes('live')) {
-                console.log(`🔍 Span ${spanCount} with live content: "${spanMatch[0].substring(0, 200)}"`);
-            } else if (spanContent.length < 20 && spanContent.length > 0) {
-                // Show short span contents that might be relevant
-                console.log(`🔍 Span ${spanCount}: "${spanContent}"`);
-            }
-        }
-        
-        // Also try different approaches to get the live page
-        console.log('\n🔍 Trying alternative detection methods...');
-        
-        // Method 1: Look for specific Instagram live classes
-        const igLiveClasses = [
-            'x972fbf', 'x10w94by', 'x1qhh985', 'x14e42zd', 'x9bdzbf', 'xln7xf2'
-        ];
-        
-        for (const className of igLiveClasses) {
-            if (html.includes(className)) {
-                console.log(`✅ Found Instagram class: ${className}`);
-                
-                // Show context around this class
-                const classIndex = html.indexOf(className);
-                const context = html.substring(Math.max(0, classIndex - 200), classIndex + 200);
-                console.log(`   Context: ${context.replace(/\s+/g, ' ').substring(0, 300)}`);
-            }
-        }
-        
-        // Method 2: Check if we're getting a mobile vs desktop version
-        console.log('\n🔍 Checking page version indicators...');
-        const pageIndicators = [
-            'mobile-web-app',
-            'viewport',
-            '_9dls', // Instagram class
-            'lang="zh-tw"'
-        ];
-        
-        for (const indicator of pageIndicators) {
-            if (html.includes(indicator)) {
-                console.log(`✅ Found page indicator: ${indicator}`);
-            }
-        }
-        
-        // Method 3: Try to find any Chinese text that might be the live indicator
-        console.log('\n🔍 Searching for ALL Chinese characters...');
-        const chineseMatches = html.match(/[\u4e00-\u9fff]+/g);
-        if (chineseMatches) {
-            const uniqueChinese = [...new Set(chineseMatches)].slice(0, 20);
-            console.log(`📊 Found Chinese text: ${uniqueChinese.join(', ')}`);
-            
-            // Check if any contains live-related terms
-            const liveTerms = ['直播', '直播中', '現在直播', '實況'];
-            for (const term of liveTerms) {
-                if (uniqueChinese.some(text => text.includes(term))) {
-                    console.log(`🔴 FOUND LIVE TERM: ${term}`);
-                    return true;
-                }
-            }
-        }
-        
-        // Method 4: Save a larger HTML sample to analyze structure
-        console.log('\n🔍 HTML Structure Analysis...');
-        const htmlSample = html.substring(0, 2000).replace(/\s+/g, ' ');
-        console.log(`📄 HTML Start: ${htmlSample}`);
-        
-        // Look for the main content area
-        const mainContentPatterns = [
-            /<main[^>]*>[\s\S]*?<\/main>/i,
-            /<div[^>]*role="main"[^>]*>[\s\S]*?<\/div>/i,
-            /<section[^>]*>[\s\S]*?<\/section>/i
-        ];
-        
-        for (let i = 0; i < mainContentPatterns.length; i++) {
-            const pattern = mainContentPatterns[i];
-            const match = html.match(pattern);
-            if (match) {
-                console.log(`📋 Found main content pattern ${i + 1} (${match[0].length} chars)`);
-                
-                if (match[0].includes('直播')) {
-                    console.log(`🔴 FOUND "直播" IN MAIN CONTENT!`);
-                    return true;
-                }
-            }
-        }
-        
-        console.log('⚫ No live indicators found - user is not live');
+        console.log('⚫ No live indicators found');
         return false;
         
     } catch (error) {
         console.error('❌ Error checking live status:', error);
+        return false;
+    }
+}
+
+// Verify login
+async function verifyInstagramLogin() {
+    try {
+        console.log('🔍 Verifying Instagram login...');
+        
+        const userId = await getUserId();
+        if (userId) {
+            console.log('✅ Instagram login verified - got user ID');
+            return true;
+        } else {
+            console.log('❌ Could not verify login - no user ID');
+            return false;
+        }
+        
+    } catch (error) {
+        console.error('❌ Error verifying login:', error);
         return false;
     }
 }
@@ -445,7 +408,7 @@ async function startMonitoring() {
     }
     
     console.log('✅ Instagram login verified!');
-    await sendDiscordMessage(`🤖 Instagram Live Monitor started for @${TARGET_USERNAME} ✅`);
+    await sendDiscordMessage(`🤖 Instagram Live Monitor started for @${TARGET_USERNAME} (API Method) ✅`);
     
     // Initial check
     console.log('🔎 Performing initial live status check...');
@@ -462,8 +425,8 @@ async function startMonitoring() {
         console.error('❌ Initial check failed:', error);
     }
     
-    // Monitor every 2 minutes for debugging (less frequent to see logs clearly)
-    console.log('⏰ Starting monitoring loop (every 2 minutes)...');
+    // Monitor every 1 minute
+    console.log('⏰ Starting monitoring loop (every 1 minute)...');
     setInterval(async () => {        
         try {
             const currentlyLive = await checkLiveStatus();
@@ -488,7 +451,7 @@ async function startMonitoring() {
         } catch (error) {
             console.error('❌ Error in monitoring loop:', error);
         }
-    }, 2 * 60 * 1000); // Check every 2 minutes
+    }, 60 * 1000); // Check every 1 minute
     
     // Heartbeat every 10 minutes
     setInterval(() => {
