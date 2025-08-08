@@ -20,7 +20,6 @@ const client = new Client({
 });
 
 let isLiveNow = false;
-let userId = '71878062223'; // We already know this from previous log
 
 // Initialize Discord bot
 client.once('ready', () => {
@@ -119,219 +118,213 @@ function makeRequest(url, options = {}) {
     });
 }
 
-// Get Instagram API headers
-function getInstagramAPIHeaders() {
-    return {
-        'User-Agent': 'Instagram 219.0.0.12.117 Android (29/10; 480dpi; 1080x2220; samsung; SM-G973F; beyond1; exynos9820; en_US; 329095854)',
-        'Accept': '*/*',
-        'Accept-Language': 'en-US',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'Connection': 'keep-alive',
-        'X-IG-App-ID': '936619743392459',
-        'X-Instagram-AJAX': '1',
-        'X-CSRFToken': IG_CSRF_TOKEN,
-        'X-Requested-With': 'XMLHttpRequest',
-        'Cookie': `sessionid=${IG_SESSION_ID}; csrftoken=${IG_CSRF_TOKEN}; ds_user_id=${IG_DS_USER_ID}`,
-        'Referer': 'https://www.instagram.com/',
-        'Origin': 'https://www.instagram.com'
-    };
-}
-
-// Check stories for live broadcasts (this is where lives usually appear)
-async function checkStoriesForLive() {
-    try {
-        console.log('🔎 Method 1: Checking Stories API for live broadcasts...');
-        
-        // Stories API endpoint
-        const storiesUrl = `https://www.instagram.com/api/v1/feed/user/${userId}/story/`;
-        const response = await makeRequest(storiesUrl, {
-            method: 'GET',
-            headers: getInstagramAPIHeaders()
-        });
-        
-        if (response.statusCode === 200) {
-            try {
-                const data = JSON.parse(response.data);
-                console.log(`📦 Stories API response: ${JSON.stringify(data).substring(0, 300)}...`);
-                
-                // Check if there are any items in stories
-                if (data.items && Array.isArray(data.items)) {
-                    console.log(`📊 Found ${data.items.length} story items`);
-                    
-                    for (const item of data.items) {
-                        // Look for live broadcast indicators
-                        if (item.media_type === 4 || // Media type 4 is typically live video
-                            item.broadcast_id ||
-                            (item.video_versions && item.live_broadcast_id)) {
-                            console.log('🔴 LIVE STORY DETECTED!');
-                            console.log(`📋 Live item: ${JSON.stringify(item, null, 2)}`);
-                            return true;
-                        }
-                        
-                        // Also check for any mention of live in the item
-                        const itemStr = JSON.stringify(item);
-                        if (itemStr.includes('broadcast') || itemStr.includes('live')) {
-                            console.log(`🔍 Found broadcast/live reference in story: ${itemStr.substring(0, 200)}`);
-                            if (itemStr.includes('"broadcast_status":"active"') || 
-                                itemStr.includes('"is_live":true')) {
-                                console.log('🔴 LIVE DETECTED in story metadata!');
-                                return true;
-                            }
-                        }
-                    }
-                } else {
-                    console.log('📊 No story items found');
-                }
-                
-            } catch (e) {
-                console.log('❌ Failed to parse stories API response:', e.message);
+// Multiple request strategies
+async function checkLiveWithMultipleStrategies() {
+    const strategies = [
+        // Strategy 1: Chrome Desktop
+        {
+            name: 'Chrome Desktop',
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+                'Accept-Language': 'zh-TW,zh;q=0.9,en;q=0.8',
+                'Accept-Encoding': 'gzip, deflate, br',
+                'Cookie': `sessionid=${IG_SESSION_ID}; csrftoken=${IG_CSRF_TOKEN}; ds_user_id=${IG_DS_USER_ID}`,
+                'Sec-Ch-Ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+                'Sec-Ch-Ua-Mobile': '?0',
+                'Sec-Ch-Ua-Platform': '"Windows"',
+                'Sec-Fetch-Dest': 'document',
+                'Sec-Fetch-Mode': 'navigate',
+                'Sec-Fetch-Site': 'none',
+                'Sec-Fetch-User': '?1',
+                'Upgrade-Insecure-Requests': '1'
             }
-        } else {
-            console.log(`❌ Stories API returned ${response.statusCode}`);
-        }
+        },
         
-        return false;
-        
-    } catch (error) {
-        console.error('❌ Error checking stories:', error.message);
-        return false;
-    }
-}
-
-// Check feed timeline for live broadcasts
-async function checkTimelineForLive() {
-    try {
-        console.log('🔎 Method 2: Checking Timeline/Feed for live broadcasts...');
-        
-        // Timeline API might show live broadcasts
-        const timelineUrl = 'https://www.instagram.com/api/v1/feed/timeline/';
-        const response = await makeRequest(timelineUrl, {
-            method: 'GET',
-            headers: getInstagramAPIHeaders()
-        });
-        
-        if (response.statusCode === 200) {
-            try {
-                const data = JSON.parse(response.data);
-                const jsonStr = JSON.stringify(data);
-                
-                // Look for our target username in live broadcasts
-                if (jsonStr.includes(TARGET_USERNAME) && 
-                    (jsonStr.includes('broadcast') || jsonStr.includes('live'))) {
-                    console.log(`🔍 Found ${TARGET_USERNAME} with broadcast/live in timeline`);
-                    
-                    if (jsonStr.includes('"broadcast_status":"active"') ||
-                        jsonStr.includes('"is_live":true') ||
-                        jsonStr.includes('"media_type":4')) {
-                        console.log('🔴 LIVE DETECTED in timeline!');
-                        return true;
-                    }
-                }
-                
-            } catch (e) {
-                console.log('❌ Failed to parse timeline response:', e.message);
+        // Strategy 2: iPhone Safari  
+        {
+            name: 'iPhone Safari',
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'zh-TW,zh;q=0.9',
+                'Accept-Encoding': 'gzip, deflate, br',
+                'Cookie': `sessionid=${IG_SESSION_ID}; csrftoken=${IG_CSRF_TOKEN}; ds_user_id=${IG_DS_USER_ID}`,
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1'
             }
-        } else {
-            console.log(`❌ Timeline API returned ${response.statusCode}`);
+        },
+        
+        // Strategy 3: Android Chrome
+        {
+            name: 'Android Chrome',  
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Linux; Android 13; SM-G981B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+                'Accept-Language': 'zh-TW,zh;q=0.9,en;q=0.8',
+                'Accept-Encoding': 'gzip, deflate, br',
+                'Cookie': `sessionid=${IG_SESSION_ID}; csrftoken=${IG_CSRF_TOKEN}; ds_user_id=${IG_DS_USER_ID}`,
+                'Sec-Ch-Ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+                'Sec-Ch-Ua-Mobile': '?1',
+                'Sec-Ch-Ua-Platform': '"Android"',
+                'Sec-Fetch-Dest': 'document',
+                'Sec-Fetch-Mode': 'navigate',
+                'Sec-Fetch-Site': 'none',
+                'Sec-Fetch-User': '?1',
+                'Upgrade-Insecure-Requests': '1'
+            }
         }
-        
-        return false;
-        
-    } catch (error) {
-        console.error('❌ Error checking timeline:', error.message);
-        return false;
-    }
-}
-
-// Alternative method: Check profile with different headers
-async function checkProfileWithMobileHeaders() {
-    try {
-        console.log('🔎 Method 3: Checking profile with mobile headers...');
-        
-        const mobileHeaders = {
-            'User-Agent': 'Instagram 219.0.0.12.117 Android (29/10; 480dpi; 1080x2220; samsung; SM-G973F; beyond1; exynos9820; en_US; 329095854)',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.5',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'Cookie': `sessionid=${IG_SESSION_ID}; csrftoken=${IG_CSRF_TOKEN}; ds_user_id=${IG_DS_USER_ID}`,
-            'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1'
-        };
-        
-        const profileUrl = `https://www.instagram.com/${TARGET_USERNAME}/`;
-        const response = await makeRequest(profileUrl, {
-            method: 'GET',
-            headers: mobileHeaders
-        });
-        
-        if (response.statusCode === 200) {
-            const html = response.data;
-            console.log(`📊 Mobile HTML length: ${html.length} characters`);
+    ];
+    
+    for (const strategy of strategies) {
+        try {
+            console.log(`🔎 Trying ${strategy.name} strategy...`);
             
-            // Look for live indicators in mobile version
-            const livePatterns = [
-                /直播/g,
-                /LIVE/g,
-                /"is_live"\s*:\s*true/g,
-                /"broadcast_status"\s*:\s*"active"/g,
-                /"media_type"\s*:\s*4/g
-            ];
+            const url = `https://www.instagram.com/${TARGET_USERNAME}/`;
+            const response = await makeRequest(url, {
+                method: 'GET',
+                headers: strategy.headers
+            });
             
-            for (const pattern of livePatterns) {
-                const matches = html.match(pattern);
-                if (matches) {
-                    console.log(`🔍 Found ${matches.length} matches for pattern: ${pattern}`);
-                    
-                    // Show context for first few matches
-                    for (let i = 0; i < Math.min(matches.length, 3); i++) {
-                        const match = matches[i];
-                        const index = html.indexOf(match);
-                        const context = html.substring(Math.max(0, index - 100), index + 100);
-                        console.log(`   Match ${i + 1}: "${context.replace(/\s+/g, ' ')}"`);
-                        
-                        // Check if this is a real live indicator (not CSS)
-                        if (!context.includes('--ig-') && !context.includes('css') && 
-                            (match === '直播' || match === 'LIVE' || context.includes('true'))) {
-                            console.log('🔴 LIVE DETECTED in mobile profile!');
-                            return true;
-                        }
-                    }
+            if (response.statusCode === 200) {
+                const html = response.data;
+                console.log(`📊 ${strategy.name}: ${html.length} chars received`);
+                
+                // Enhanced live detection with multiple approaches
+                const liveCheck = await analyzeHTMLForLive(html, strategy.name);
+                if (liveCheck) {
+                    console.log(`🔴 LIVE detected using ${strategy.name}!`);
+                    return true;
+                }
+            } else {
+                console.log(`❌ ${strategy.name}: HTTP ${response.statusCode}`);
+            }
+            
+            // Small delay between requests
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            
+        } catch (error) {
+            console.log(`❌ ${strategy.name} failed: ${error.message}`);
+        }
+    }
+    
+    return false;
+}
+
+// Advanced HTML analysis
+async function analyzeHTMLForLive(html, strategy) {
+    console.log(`🔍 Analyzing HTML from ${strategy}...`);
+    
+    // Method 1: Direct text search with context analysis
+    const liveTexts = ['直播', 'LIVE', 'En vivo', 'Live', 'ライブ', '라이브'];
+    
+    for (const liveText of liveTexts) {
+        const indices = [];
+        let index = html.indexOf(liveText);
+        
+        while (index !== -1) {
+            indices.push(index);
+            index = html.indexOf(liveText, index + 1);
+        }
+        
+        if (indices.length > 0) {
+            console.log(`🔍 Found ${indices.length} occurrences of "${liveText}"`);
+            
+            for (let i = 0; i < Math.min(indices.length, 3); i++) {
+                const idx = indices[i];
+                const context = html.substring(Math.max(0, idx - 200), idx + 200);
+                
+                // Analyze context to determine if it's a real live indicator
+                const isRealLive = analyzeContext(context, liveText);
+                if (isRealLive) {
+                    console.log(`🔴 Real live indicator found: "${context.replace(/\s+/g, ' ').substring(0, 100)}"`);
+                    return true;
                 }
             }
         }
-        
-        return false;
-        
-    } catch (error) {
-        console.error('❌ Error checking mobile profile:', error.message);
-        return false;
     }
+    
+    // Method 2: JSON data extraction with improved parsing
+    const jsonPatterns = [
+        /window\._sharedData\s*=\s*({.*?});/s,
+        /"is_live"\s*:\s*true/g,
+        /"broadcast_status"\s*:\s*"active"/g,
+        /"__typename"\s*:\s*"Graph.*?Live.*?Video"/g
+    ];
+    
+    for (const pattern of jsonPatterns) {
+        const matches = html.match(pattern);
+        if (matches) {
+            console.log(`🔍 Found JSON pattern: ${pattern.toString().substring(0, 50)}...`);
+            
+            if (pattern.toString().includes('is_live') || 
+                pattern.toString().includes('broadcast_status') ||
+                pattern.toString().includes('Live')) {
+                console.log('🔴 Live indicator in JSON!');
+                return true;
+            }
+        }
+    }
+    
+    // Method 3: Meta tag analysis
+    const metaLivePattern = /<meta[^>]*(?:live|broadcast)[^>]*>/gi;
+    const metaMatches = html.match(metaLivePattern);
+    if (metaMatches) {
+        console.log(`🔍 Found ${metaMatches.length} meta tags with live/broadcast`);
+        for (const meta of metaMatches) {
+            if (meta.includes('true') || meta.includes('active')) {
+                console.log(`🔴 Live meta tag: ${meta}`);
+                return true;
+            }
+        }
+    }
+    
+    return false;
 }
 
-// Main live status check combining all methods
-async function checkLiveStatus() {
-    try {
-        console.log(`🔍 Checking if @${TARGET_USERNAME} is live...`);
-        
-        // Method 1: Check stories API
-        const storiesLive = await checkStoriesForLive();
-        if (storiesLive) return true;
-        
-        // Method 2: Check timeline/feed
-        const timelineLive = await checkTimelineForLive();
-        if (timelineLive) return true;
-        
-        // Method 3: Check profile with mobile headers
-        const mobileLive = await checkProfileWithMobileHeaders();
-        if (mobileLive) return true;
-        
-        console.log('⚫ No live indicators found through any method');
-        return false;
-        
-    } catch (error) {
-        console.error('❌ Error in checkLiveStatus:', error);
-        return false;
+// Analyze context to determine if live text is real
+function analyzeContext(context, liveText) {
+    const contextLower = context.toLowerCase();
+    
+    // Exclude false positives
+    const falsePositives = [
+        '--ig-live',
+        'css',
+        'stylesheet', 
+        'script',
+        'comment',
+        'border-radius',
+        'font-family',
+        'padding',
+        'margin'
+    ];
+    
+    for (const fp of falsePositives) {
+        if (contextLower.includes(fp)) {
+            return false;
+        }
     }
+    
+    // Look for positive indicators
+    const positiveIndicators = [
+        '<span',
+        '<div',
+        'class=',
+        'style=',
+        'border:',
+        'padding:',
+        'font-size:'
+    ];
+    
+    let positiveCount = 0;
+    for (const pi of positiveIndicators) {
+        if (contextLower.includes(pi)) {
+            positiveCount++;
+        }
+    }
+    
+    // If we have HTML structure around the live text, it's likely real
+    return positiveCount >= 2;
 }
 
 // Simple login verification
@@ -339,11 +332,12 @@ async function verifyInstagramLogin() {
     try {
         console.log('🔍 Verifying Instagram login...');
         
-        // Quick check if we can access profile
-        const profileUrl = `https://www.instagram.com/${TARGET_USERNAME}/`;
-        const response = await makeRequest(profileUrl, {
+        const response = await makeRequest(`https://www.instagram.com/${TARGET_USERNAME}/`, {
             method: 'GET',
-            headers: getInstagramAPIHeaders()
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Cookie': `sessionid=${IG_SESSION_ID}; csrftoken=${IG_CSRF_TOKEN}; ds_user_id=${IG_DS_USER_ID}`
+            }
         });
         
         if (response.statusCode === 200 && !response.data.includes('Log in')) {
@@ -362,7 +356,7 @@ async function verifyInstagramLogin() {
 
 // Main monitoring loop
 async function startMonitoring() {
-    console.log(`🚀 Starting Instagram Live monitoring for @${TARGET_USERNAME} (Stories API Method)`);
+    console.log(`🚀 Starting Instagram Live monitoring for @${TARGET_USERNAME} (Smart HTML Analysis)`);
     
     // Verify login first
     const loginValid = await verifyInstagramLogin();
@@ -376,12 +370,12 @@ async function startMonitoring() {
     }
     
     console.log('✅ Instagram login verified!');
-    await sendDiscordMessage(`🤖 Instagram Live Monitor started for @${TARGET_USERNAME} (Stories API) ✅`);
+    await sendDiscordMessage(`🤖 Instagram Live Monitor started for @${TARGET_USERNAME} (Smart Analysis) ✅`);
     
     // Initial check
     console.log('🔎 Performing initial live status check...');
     try {
-        const initialStatus = await checkLiveStatus();
+        const initialStatus = await checkLiveWithMultipleStrategies();
         isLiveNow = initialStatus;
         
         if (initialStatus) {
@@ -393,11 +387,11 @@ async function startMonitoring() {
         console.error('❌ Initial check failed:', error);
     }
     
-    // Monitor every 30 seconds for faster detection
-    console.log('⏰ Starting monitoring loop (every 30 seconds)...');
+    // Monitor every 45 seconds
+    console.log('⏰ Starting monitoring loop (every 45 seconds)...');
     setInterval(async () => {        
         try {
-            const currentlyLive = await checkLiveStatus();
+            const currentlyLive = await checkLiveWithMultipleStrategies();
             
             // Status changed to live
             if (currentlyLive && !isLiveNow) {
@@ -419,7 +413,7 @@ async function startMonitoring() {
         } catch (error) {
             console.error('❌ Error in monitoring loop:', error);
         }
-    }, 30 * 1000); // Check every 30 seconds
+    }, 45 * 1000); // Check every 45 seconds
     
     // Heartbeat every 10 minutes
     setInterval(() => {
