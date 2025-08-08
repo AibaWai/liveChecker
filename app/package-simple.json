@@ -1,0 +1,24 @@
+{
+  "name": "instagram-live-monitor-simple",
+  "version": "1.0.0",
+  "description": "A lightweight bot that monitors Instagram Live streams using HTTP requests",
+  "main": "main.js",
+  "scripts": {
+    "start": "node main.js"
+  },
+  "keywords": [
+    "instagram",
+    "live",
+    "monitor",
+    "discord",
+    "bot"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "discord.js": "^14.14.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
