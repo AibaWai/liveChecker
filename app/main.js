@@ -11,7 +11,13 @@ const IG_DS_USER_ID = process.env.IG_DS_USER_ID;
 const TARGET_USERNAME = process.env.TARGET_USERNAME;
 
 // Discord client setup
-const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+const client = new Client({ 
+    intents: [
+        GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.MessageContent
+    ]
+});
 
 let browser;
 let page;
@@ -21,17 +27,51 @@ let cookiesValid = true;
 // Initialize Discord bot
 client.once('ready', () => {
     console.log(`Logged in as ${client.user.tag}!`);
+    console.log('Environment variables check:');
+    console.log('- DISCORD_TOKEN:', DISCORD_TOKEN ? 'Set' : 'Missing');
+    console.log('- DISCORD_CHANNEL_ID:', DISCORD_CHANNEL_ID || 'Missing');
+    console.log('- TARGET_USERNAME:', TARGET_USERNAME || 'Missing');
+    console.log('- IG_SESSION_ID:', IG_SESSION_ID ? 'Set' : 'Missing');
+    console.log('- IG_CSRF_TOKEN:', IG_CSRF_TOKEN ? 'Set' : 'Missing');
+    console.log('- IG_DS_USER_ID:', IG_DS_USER_ID ? 'Set' : 'Missing');
+    
+    if (!TARGET_USERNAME) {
+        console.error('TARGET_USERNAME is not set!');
+        return;
+    }
+    
+    if (!DISCORD_CHANNEL_ID) {
+        console.error('DISCORD_CHANNEL_ID is not set!');
+        return;
+    }
+    
     startMonitoring();
 });
 
 // Send Discord message
 async function sendDiscordMessage(message) {
     try {
+        if (!DISCORD_CHANNEL_ID) {
+            console.error('DISCORD_CHANNEL_ID not set');
+            return;
+        }
+        
         const channel = await client.channels.fetch(DISCORD_CHANNEL_ID);
+        if (!channel) {
+            console.error('Channel not found or bot has no access');
+            return;
+        }
+        
         await channel.send(message);
         console.log('Discord message sent:', message);
     } catch (error) {
         console.error('Failed to send Discord message:', error);
+        if (error.code === 50001) {
+            console.error('Bot is missing access to the channel. Please check:');
+            console.error('1. Bot is invited to the server');
+            console.error('2. Bot has "View Channel" and "Send Messages" permissions');
+            console.error('3. Channel ID is correct');
+        }
     }
 }
 

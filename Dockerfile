@@ -54,8 +54,7 @@ COPY app/package*.json ./
 RUN npm install --only=production
 
 # Install Playwright browsers
-RUN npx playwright install chromium
-RUN npx playwright install-deps chromium
+RUN npx playwright install --with-deps chromium
 
 # Copy application code
 COPY app/ ./
@@ -70,4 +69,6 @@ USER appuser
 
 EXPOSE 3000
 
-CMD ["node", "main.js"]
+#CMD ["node", "main.js"]
+
+CMD ["node", "debug-main.js"]
