@@ -68,7 +68,7 @@ function makeRequest(url, options = {}) {
     });
 }
 
-// Check live status by scraping public page
+// Check live status with extensive debugging
 async function checkLiveStatus() {
     try {
         console.log('🔍 Checking Instagram page for live indicators...');
@@ -90,112 +90,207 @@ async function checkLiveStatus() {
             }
         });
         
+        console.log(`📊 Response status: ${response.statusCode}`);
+        console.log(`📊 Content length: ${response.data.length} characters`);
+        
         if (response.statusCode !== 200) {
-            console.log(`Instagram page returned status: ${response.statusCode}`);
+            console.log(`❌ Instagram page returned status: ${response.statusCode}`);
             return false;
         }
         
         const html = response.data;
         
-        // Check for various live indicators in HTML
+        // Debug: Show first 1000 characters of HTML
+        console.log('📄 HTML Preview (first 1000 chars):');
+        console.log(html.substring(0, 1000));
+        console.log('📄 End of HTML preview');
+        
+        // Expanded live indicators
         const liveIndicators = [
+            // Broadcast status indicators
             'broadcast_status":"active"',
-            '"is_live":true',
             '"broadcast_status":"active"',
+            'broadcastStatus":"active"',
+            
+            // Live flags
+            '"is_live":true',
+            '"isLive":true',
+            'is_live":true',
+            'isLive":true',
+            
+            // Live UI elements
             'ig-live-badge',
             'live-video-indicator',
+            'live-badge',
             'LIVE</span>',
+            'Live</span>',
             'aria-label="Live"',
+            'aria-label="LIVE"',
+            'class="live"',
+            
+            // Story live indicators
             'story_type":"live"',
-            '"__typename":"GraphLiveVideo"'
+            'storyType":"live"',
+            '"story_type":"live"',
+            '"storyType":"live"',
+            
+            // GraphQL types
+            '"__typename":"GraphLiveVideo"',
+            '__typename":"GraphLiveVideo"',
+            'GraphLiveVideo',
+            
+            // Media types
+            'media_type":4',
+            '"media_type":4',
+            'mediaType":4',
+            '"mediaType":4',
+            
+            // Additional patterns
+            'broadcast":{"',
+            '"broadcast":{',
+            'live_video_id',
+            'liveVideoId',
+            'dash_live_encodings',
+            'broadcast_owner',
+            'viewer_count'
         ];
         
-        let foundIndicator = false;
-        let detectionMethod = '';
+        console.log('🔎 Checking for live indicators...');
+        let foundIndicators = [];
         
         for (const indicator of liveIndicators) {
             if (html.includes(indicator)) {
-                foundIndicator = true;
-                detectionMethod = indicator;
-                break;
+                foundIndicators.push(indicator);
+                console.log(`✅ Found indicator: "${indicator}"`);
             }
         }
         
-        if (foundIndicator) {
-            console.log(`✅ LIVE detected! Found indicator: "${detectionMethod}"`);
+        if (foundIndicators.length > 0) {
+            console.log(`🎉 LIVE DETECTED! Found ${foundIndicators.length} indicators:`, foundIndicators);
             return true;
         }
         
-        // Additional check for shared data
-        try {
-            const sharedDataMatch = html.match(/window\._sharedData = ({.*?});/);
-            if (sharedDataMatch) {
-                const sharedData = JSON.parse(sharedDataMatch[1]);
-                const user = sharedData?.entry_data?.ProfilePage?.[0]?.graphql?.user;
+        // Check for window._sharedData
+        console.log('🔍 Checking window._sharedData...');
+        const sharedDataMatches = html.match(/window\._sharedData\s*=\s*({.*?});/s);
+        if (sharedDataMatches) {
+            console.log('📦 Found _sharedData, checking for live status...');
+            try {
+                const sharedData = JSON.parse(sharedDataMatches[1]);
+                console.log('📦 Shared data keys:', Object.keys(sharedData));
                 
-                if (user && user.broadcast && user.broadcast.broadcast_status === 'active') {
-                    console.log('✅ LIVE detected via shared data!');
-                    return true;
+                const user = sharedData?.entry_data?.ProfilePage?.[0]?.graphql?.user;
+                if (user) {
+                    console.log('👤 User data found in shared data');
+                    if (user.broadcast) {
+                        console.log('📡 Broadcast data:', JSON.stringify(user.broadcast, null, 2));
+                        if (user.broadcast.broadcast_status === 'active') {
+                            console.log('✅ LIVE detected via shared data broadcast!');
+                            return true;
+                        }
+                    }
+                    if (user.is_live) {
+                        console.log('✅ LIVE detected via shared data is_live flag!');
+                        return true;
+                    }
+                } else {
+                    console.log('❌ No user data in shared data');
                 }
+            } catch (e) {
+                console.log('❌ Could not parse shared data:', e.message);
             }
-        } catch (e) {
-            console.log('Could not parse shared data, continuing...');
+        } else {
+            console.log('❌ No _sharedData found');
         }
         
-        // Check for JSON data in script tags
-        const scriptMatches = html.match(/<script type="application\/json"[^>]*>([^<]*)<\/script>/g);
-        if (scriptMatches) {
-            for (const scriptMatch of scriptMatches) {
+        // Check for JSON script tags
+        console.log('🔍 Checking JSON script tags...');
+        const scriptMatches = html.match(/<script type="application\/json"[^>]*data-content-len="[^"]*"[^>]*>([^<]*)<\/script>/g);
+        if (scriptMatches && scriptMatches.length > 0) {
+            console.log(`📦 Found ${scriptMatches.length} JSON script tags`);
+            
+            for (let i = 0; i < scriptMatches.length; i++) {
+                const scriptMatch = scriptMatches[i];
                 const jsonMatch = scriptMatch.match(/>([^<]*)</);
                 if (jsonMatch) {
                     try {
                         const jsonData = JSON.parse(jsonMatch[1]);
                         const jsonString = JSON.stringify(jsonData);
                         
+                        console.log(`📄 Script ${i + 1} length: ${jsonString.length} chars`);
+                        
                         if (jsonString.includes('broadcast_status":"active"') || 
-                            jsonString.includes('"is_live":true')) {
-                            console.log('✅ LIVE detected in JSON script data!');
+                            jsonString.includes('"is_live":true') ||
+                            jsonString.includes('GraphLiveVideo') ||
+                            jsonString.includes('media_type":4')) {
+                            console.log(`✅ LIVE detected in JSON script ${i + 1}!`);
+                            console.log('🎯 Relevant JSON snippet:', jsonString.substring(jsonString.indexOf('broadcast') - 100, jsonString.indexOf('broadcast') + 200));
                             return true;
                         }
                     } catch (e) {
-                        // Continue to next script
+                        console.log(`❌ Could not parse JSON script ${i + 1}:`, e.message);
                     }
                 }
             }
+        } else {
+            console.log('❌ No JSON script tags found');
         }
         
-        console.log('❌ No live stream detected');
+        // Check for any "live" related text
+        console.log('🔍 Searching for any "live" mentions...');
+        const liveRegex = /live/gi;
+        const liveMatches = html.match(liveRegex);
+        if (liveMatches) {
+            console.log(`📊 Found ${liveMatches.length} mentions of "live" in the page`);
+            // Show context around first few matches
+            const liveIndices = [];
+            let match;
+            const regex = /live/gi;
+            let count = 0;
+            while ((match = regex.exec(html)) !== null && count < 5) {
+                liveIndices.push(match.index);
+                const start = Math.max(0, match.index - 50);
+                const end = Math.min(html.length, match.index + 50);
+                console.log(`📄 Live context ${count + 1}: "${html.substring(start, end)}"`);
+                count++;
+            }
+        } else {
+            console.log('❌ No mentions of "live" found in the page');
+        }
+        
+        console.log('❌ No live stream detected after extensive search');
         return false;
         
     } catch (error) {
-        console.error('Error checking live status:', error);
+        console.error('❌ Error checking live status:', error);
         return false;
     }
 }
 
 // Main monitoring loop
 async function startMonitoring() {
-    console.log(`🚀 Starting Instagram Live monitoring for @${TARGET_USERNAME} (Page Scraping Version)`);
-    await sendDiscordMessage(`🤖 Instagram Live Monitor started for @${TARGET_USERNAME} (No Cookies Required!)`);
+    console.log(`🚀 Starting Instagram Live monitoring for @${TARGET_USERNAME} (Debug Version)`);
+    await sendDiscordMessage(`🤖 Instagram Live Monitor started for @${TARGET_USERNAME} (Debug Version - Extensive Logging)`);
     
     // Initial check
-    console.log('Performing initial live status check...');
+    console.log('🔎 Performing initial live status check...');
     try {
         const initialStatus = await checkLiveStatus();
         isLiveNow = initialStatus;
         if (initialStatus) {
             await sendDiscordMessage(`🔴 @${TARGET_USERNAME} is currently LIVE on Instagram! https://www.instagram.com/${TARGET_USERNAME}/`);
         } else {
-            console.log('✅ Initial check complete - not currently live');
+            console.log('✅ Initial check complete - not currently live (according to our detection)');
         }
     } catch (error) {
-        console.error('Initial check failed:', error);
+        console.error('❌ Initial check failed:', error);
     }
     
-    // Monitor every minute
-    console.log('⏰ Starting monitoring loop (every 60 seconds)...');
+    // Monitor every 2 minutes for testing (more frequent)
+    console.log('⏰ Starting monitoring loop (every 2 minutes for debugging)...');
     setInterval(async () => {
         try {
+            console.log('\n🔄 --- Starting new check cycle ---');
             const currentlyLive = await checkLiveStatus();
             
             // Send notification when going live
@@ -207,16 +302,20 @@ async function startMonitoring() {
             else if (!currentlyLive && isLiveNow) {
                 isLiveNow = false;
                 await sendDiscordMessage(`⚫ @${TARGET_USERNAME} has ended their Instagram Live stream.`);
+            } else {
+                console.log(`📊 Status unchanged: ${currentlyLive ? '🔴 LIVE' : '⚫ Offline'}`);
             }
             
+            console.log('🔄 --- Check cycle complete ---\n');
+            
         } catch (error) {
-            console.error('Error in monitoring loop:', error);
+            console.error('❌ Error in monitoring loop:', error);
         }
-    }, 60 * 1000); // Check every minute
+    }, 2 * 60 * 1000); // Check every 2 minutes for debugging
     
     // Keep alive heartbeat
     setInterval(() => {
-        console.log(`💓 Bot heartbeat - monitoring @${TARGET_USERNAME} | Status: ${isLiveNow ? '🔴 LIVE' : '⚫ Offline'}`);
+        console.log(`💓 Bot heartbeat - monitoring @${TARGET_USERNAME} | Status: ${isLiveNow ? '🔴 LIVE' : '⚫ Offline'} | Time: ${new Date().toISOString()}`);
     }, 10 * 60 * 1000); // Every 10 minutes
 }
 
