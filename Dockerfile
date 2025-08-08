@@ -40,7 +40,6 @@ RUN apt-get update && apt-get install -y \
     libxss1 \
     libxtst6 \
     lsb-release \
-    wget \
     xdg-utils \
     --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
@@ -53,22 +52,19 @@ COPY app/package*.json ./
 # Install dependencies
 RUN npm install --only=production
 
-# Install Playwright browsers
-RUN npx playwright install --with-deps chromium
+# Install Playwright browsers (as root for better compatibility)
+RUN npx playwright install chromium
+RUN npx playwright install-deps chromium
 
 # Copy application code
 COPY app/ ./
 
-# Create non-root user
-RUN groupadd -r appuser && useradd -r -g appuser -G audio,video appuser \
-    && mkdir -p /home/appuser/Downloads \
-    && chown -R appuser:appuser /app \
-    && chown -R appuser:appuser /home/appuser
+# Set environment variable to allow running as root
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=false
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
-USER appuser
-
+# Expose port
 EXPOSE 3000
 
+# Run as root (safer for Playwright in containers)
 CMD ["node", "main.js"]
-
-#CMD ["node", "debug-main.js"]
