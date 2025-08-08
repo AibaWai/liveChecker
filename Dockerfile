@@ -12,7 +12,10 @@ COPY src ./src
 RUN npx playwright install --with-deps
 
 # 編譯
+RUN npm i -D @types/express @types/node
+
 RUN npm run build
+
 
 # 預設環境
 ENV NODE_ENV=production
