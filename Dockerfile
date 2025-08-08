@@ -1,55 +1,21 @@
-FROM node:18-slim
+# Playwright 官方 Docker 基底，內建瀏覽器相依
+# 版本號請與你的 package.json 中的 playwright 版本對齊
+FROM mcr.microsoft.com/playwright:v1.54.0-noble
 
-# Install dependencies for Playwright
-RUN apt-get update && apt-get install -y \
-    wget \
-    gnupg \
-    ca-certificates \
-    procps \
-    libxss1 \
-    libgconf-2-4 \
-    libxrandr2 \
-    libasound2 \
-    libpangocairo-1.0-0 \
-    libatk1.0-0 \
-    libcairo-gobject2 \
-    libgtk-3-0 \
-    libgdk-pixbuf2.0-0 \
-    libxcomposite1 \
-    libxcursor1 \
-    libxdamage1 \
-    libxext6 \
-    libxfixes3 \
-    libxi6 \
-    libxrender1 \
-    libxtst6 \
-    libglib2.0-0 \
-    libnss3 \
-    libdrm2 \
-    libxss1 \
-    libgbm1 \
-    && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
 
+# 先拷貝鎖檔以利快取
+COPY app/package.json app/package-lock.json* ./
+RUN npm ci --omit=dev
 
-    WORKDIR /app
+# 拷貝程式碼
+COPY app/ ./
 
-# Copy package files first for better caching
-COPY app/package.json ./
+# 安裝 Chromium 與相依（基底已備好系統依賴）
+RUN npx playwright install --with-deps chromium
 
-# Install npm dependencies
-RUN npm install --only=production
+# 以非 root 執行（基底映像已內建 pwuser）
+USER pwuser
 
-# Install Playwright and browser
-RUN npx playwright install chromium --with-deps
-
-# Copy application code
-COPY app/ .
-
-# Create logs directory
-RUN mkdir -p logs
-
-# Expose port (for health checks)
-EXPOSE 3000
-
-# Run the application
+# Worker 類型不需要對外 Port；移除 EXPOSE
 CMD ["node", "index.js"]
