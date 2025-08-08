@@ -410,21 +410,29 @@ async function checkLiveStatus() {
         // Search for story rings (live streams often appear as stories)
         console.log('🔍 Checking for story rings and live indicators...');
         const storyPatterns = [
-            /story[^"]*live/i,
-            /live[^"]*story/i,
-            /canvas[^>]*>/i, // Stories often use canvas
-            /gradient.*story/i,
-            /ring.*live/i
+            // Be more specific to avoid CSS false positives
+            /canvas[^>]*story[^>]*live/i,
+            /story.*ring.*live/i,
+            /live.*story.*ring/i,
+            // Avoid CSS variables like --live-video-border-radius
+            /(?<!--)story[^"]*live(?!-)/i,
+            /(?<!--)live[^"]*story(?!-)/i
         ];
         
         for (const pattern of storyPatterns) {
             const matches = html.match(pattern);
             if (matches) {
-                console.log(`🔴 Found story/live pattern: ${matches[0]}`);
-                const matchIndex = html.indexOf(matches[0]);
-                const context = html.substring(Math.max(0, matchIndex - 200), matchIndex + 200);
-                console.log(`🎯 Story context: "${context}"`);
-                return true;
+                const matchedText = matches[0];
+                // Additional check to ensure it's not a CSS variable
+                if (!matchedText.includes('--') && !matchedText.includes('border-radius') && !matchedText.includes('padding')) {
+                    console.log(`🔴 Found story/live pattern: ${matchedText}`);
+                    const matchIndex = html.indexOf(matchedText);
+                    const context = html.substring(Math.max(0, matchIndex - 200), matchIndex + 200);
+                    console.log(`🎯 Story context: "${context}"`);
+                    return true;
+                } else {
+                    console.log(`⚠️ Skipped CSS variable: ${matchedText}`);
+                }
             }
         }
         
