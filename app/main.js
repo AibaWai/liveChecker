@@ -198,12 +198,46 @@ async function checkLiveStatus() {
         // DEBUG: Show actual HTML content around profile area
         console.log('\n🔍 === DEBUG: HTML CONTENT ANALYSIS ===');
         
+        // Look for the specific div class you found
+        console.log('🔍 Searching for live badge div with specific classes...');
+        const liveBadgePatterns = [
+            // Exact class pattern you found
+            /<div[^>]*class="[^"]*x6s0dn4[^"]*x78zum5[^"]*xl56j7k[^"]*x10l6tqk[^"]*xh8yej3[^"]*x1xtax4o[^"]*"[^>]*>[\s\S]*?<\/div>/gi,
+            
+            // More flexible patterns
+            /<div[^>]*x6s0dn4[^>]*x78zum5[^>]*xl56j7k[^>]*>[\s\S]*?<\/div>/gi,
+            /<div[^>]*x6s0dn4[^>]*>[\s\S]*?直播[\s\S]*?<\/div>/gi,
+            
+            // Any div containing the specific classes
+            /<div[^>]*x6s0dn4[^"]*x78zum5[^"]*xl56j7k[^"]*x10l6tqk[^"]*xh8yej3[^"]*x1xtax4o[^>]*>/gi
+        ];
+        
+        for (let i = 0; i < liveBadgePatterns.length; i++) {
+            const pattern = liveBadgePatterns[i];
+            const matches = html.match(pattern);
+            
+            if (matches) {
+                console.log(`🔍 Found ${matches.length} div(s) matching pattern ${i + 1}`);
+                
+                // Check first few matches
+                for (let j = 0; j < Math.min(matches.length, 3); j++) {
+                    const match = matches[j];
+                    console.log(`📋 Div ${j + 1} content (first 300 chars): ${match.substring(0, 300).replace(/\s+/g, ' ')}`);
+                    
+                    // Check if this div contains "直播"
+                    if (match.includes('直播')) {
+                        console.log(`🔴 FOUND "直播" IN DIV ${j + 1}!`);
+                        return true;
+                    }
+                }
+            }
+        }
+        
         // Look for header section specifically
         const headerMatch = html.match(/<header[^>]*>[\s\S]*?<\/header>/i);
         if (headerMatch) {
             const headerContent = headerMatch[0];
             console.log(`📋 Found header section (${headerContent.length} chars)`);
-            console.log(`📋 Header content preview: ${headerContent.substring(0, 500).replace(/\s+/g, ' ')}`);
             
             // Check if header contains "直播"
             if (headerContent.includes('直播')) {
@@ -219,6 +253,22 @@ async function checkLiveStatus() {
             }
         } else {
             console.log('❌ No header section found');
+        }
+        
+        // Search for ANY div with x6s0dn4 class (to see if we're getting the right structure)
+        console.log('\n🔍 Searching for ANY div with x6s0dn4 class...');
+        const x6s0dn4Pattern = /<div[^>]*x6s0dn4[^>]*>/gi;
+        const x6s0dn4Matches = html.match(x6s0dn4Pattern);
+        
+        if (x6s0dn4Matches) {
+            console.log(`📊 Found ${x6s0dn4Matches.length} divs with x6s0dn4 class`);
+            
+            // Show first few matches
+            for (let i = 0; i < Math.min(x6s0dn4Matches.length, 5); i++) {
+                console.log(`   ${i + 1}. ${x6s0dn4Matches[i].substring(0, 200)}`);
+            }
+        } else {
+            console.log('❌ No divs with x6s0dn4 class found - different page structure!');
         }
         
         // DEBUG: Search for any occurrence of "直播" in entire HTML
@@ -294,7 +344,81 @@ async function checkLiveStatus() {
             }
         }
         
-        console.log('🔍 === END DEBUG ANALYSIS ===\n');
+        // Also try different approaches to get the live page
+        console.log('\n🔍 Trying alternative detection methods...');
+        
+        // Method 1: Look for specific Instagram live classes
+        const igLiveClasses = [
+            'x972fbf', 'x10w94by', 'x1qhh985', 'x14e42zd', 'x9bdzbf', 'xln7xf2'
+        ];
+        
+        for (const className of igLiveClasses) {
+            if (html.includes(className)) {
+                console.log(`✅ Found Instagram class: ${className}`);
+                
+                // Show context around this class
+                const classIndex = html.indexOf(className);
+                const context = html.substring(Math.max(0, classIndex - 200), classIndex + 200);
+                console.log(`   Context: ${context.replace(/\s+/g, ' ').substring(0, 300)}`);
+            }
+        }
+        
+        // Method 2: Check if we're getting a mobile vs desktop version
+        console.log('\n🔍 Checking page version indicators...');
+        const pageIndicators = [
+            'mobile-web-app',
+            'viewport',
+            '_9dls', // Instagram class
+            'lang="zh-tw"'
+        ];
+        
+        for (const indicator of pageIndicators) {
+            if (html.includes(indicator)) {
+                console.log(`✅ Found page indicator: ${indicator}`);
+            }
+        }
+        
+        // Method 3: Try to find any Chinese text that might be the live indicator
+        console.log('\n🔍 Searching for ALL Chinese characters...');
+        const chineseMatches = html.match(/[\u4e00-\u9fff]+/g);
+        if (chineseMatches) {
+            const uniqueChinese = [...new Set(chineseMatches)].slice(0, 20);
+            console.log(`📊 Found Chinese text: ${uniqueChinese.join(', ')}`);
+            
+            // Check if any contains live-related terms
+            const liveTerms = ['直播', '直播中', '現在直播', '實況'];
+            for (const term of liveTerms) {
+                if (uniqueChinese.some(text => text.includes(term))) {
+                    console.log(`🔴 FOUND LIVE TERM: ${term}`);
+                    return true;
+                }
+            }
+        }
+        
+        // Method 4: Save a larger HTML sample to analyze structure
+        console.log('\n🔍 HTML Structure Analysis...');
+        const htmlSample = html.substring(0, 2000).replace(/\s+/g, ' ');
+        console.log(`📄 HTML Start: ${htmlSample}`);
+        
+        // Look for the main content area
+        const mainContentPatterns = [
+            /<main[^>]*>[\s\S]*?<\/main>/i,
+            /<div[^>]*role="main"[^>]*>[\s\S]*?<\/div>/i,
+            /<section[^>]*>[\s\S]*?<\/section>/i
+        ];
+        
+        for (let i = 0; i < mainContentPatterns.length; i++) {
+            const pattern = mainContentPatterns[i];
+            const match = html.match(pattern);
+            if (match) {
+                console.log(`📋 Found main content pattern ${i + 1} (${match[0].length} chars)`);
+                
+                if (match[0].includes('直播')) {
+                    console.log(`🔴 FOUND "直播" IN MAIN CONTENT!`);
+                    return true;
+                }
+            }
+        }
         
         console.log('⚫ No live indicators found - user is not live');
         return false;
