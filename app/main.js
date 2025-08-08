@@ -123,7 +123,7 @@ function getInstagramHeaders() {
     return {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
-        'Accept-Language': 'zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7',  // 設定中文語言
+        'Accept-Language': 'zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7',
         'Accept-Encoding': 'gzip, deflate, br',
         'Connection': 'keep-alive',
         'Upgrade-Insecure-Requests': '1',
@@ -176,7 +176,7 @@ async function verifyInstagramLogin() {
     }
 }
 
-// Simple and focused live status check
+// DEBUG: Enhanced live status check with full HTML analysis
 async function checkLiveStatus() {
     try {
         console.log(`🔍 Checking if @${TARGET_USERNAME} is live...`);
@@ -193,66 +193,108 @@ async function checkLiveStatus() {
         }
         
         const html = response.data;
+        console.log(`📊 HTML length: ${html.length} characters`);
         
-        // Method 1: Direct search for "直播" text in span elements
-        console.log('🔎 Searching for "直播" badge...');
+        // DEBUG: Show actual HTML content around profile area
+        console.log('\n🔍 === DEBUG: HTML CONTENT ANALYSIS ===');
         
-        // Look for the exact pattern from your HTML
-        const liveBadgePatterns = [
-            // Exact "直播" text in span with border styling
-            /<span[^>]*style="[^"]*border:\s*2px\s+solid[^"]*"[^>]*>直播<\/span>/gi,
+        // Look for header section specifically
+        const headerMatch = html.match(/<header[^>]*>[\s\S]*?<\/header>/i);
+        if (headerMatch) {
+            const headerContent = headerMatch[0];
+            console.log(`📋 Found header section (${headerContent.length} chars)`);
+            console.log(`📋 Header content preview: ${headerContent.substring(0, 500).replace(/\s+/g, ' ')}`);
             
-            // More general "直播" in span
-            /<span[^>]*>直播<\/span>/gi,
-            
-            // "直播" in any element within header
-            /<header[^>]*>[\s\S]*?直播[\s\S]*?<\/header>/gi,
-            
-            // Just look for "直播" text (most reliable)
-            /直播/g
-        ];
-        
-        for (let i = 0; i < liveBadgePatterns.length; i++) {
-            const pattern = liveBadgePatterns[i];
-            const matches = html.match(pattern);
-            
-            if (matches) {
-                console.log(`🔴 LIVE DETECTED! Pattern ${i + 1} found ${matches.length} matches`);
-                console.log(`🎯 First match: "${matches[0].substring(0, 200)}"`);
+            // Check if header contains "直播"
+            if (headerContent.includes('直播')) {
+                console.log('🔴 FOUND "直播" IN HEADER!');
                 
-                // Show context around the match
-                const firstMatch = matches[0];
-                const index = html.indexOf(firstMatch);
-                const context = html.substring(Math.max(0, index - 300), index + 300);
-                console.log(`🎯 Context: "${context.replace(/\s+/g, ' ').substring(0, 300)}"`);
-                
+                // Show exact context
+                const liveIndex = headerContent.indexOf('直播');
+                const context = headerContent.substring(Math.max(0, liveIndex - 200), liveIndex + 200);
+                console.log(`🎯 "直播" context: ${context.replace(/\s+/g, ' ')}`);
                 return true;
+            } else {
+                console.log('❌ No "直播" found in header');
+            }
+        } else {
+            console.log('❌ No header section found');
+        }
+        
+        // DEBUG: Search for any occurrence of "直播" in entire HTML
+        console.log('\n🔍 Searching entire HTML for "直播"...');
+        const allLiveMatches = [];
+        let searchIndex = 0;
+        
+        while (true) {
+            const liveIndex = html.indexOf('直播', searchIndex);
+            if (liveIndex === -1) break;
+            
+            const context = html.substring(Math.max(0, liveIndex - 100), liveIndex + 100);
+            allLiveMatches.push({
+                position: liveIndex,
+                context: context.replace(/\s+/g, ' ')
+            });
+            
+            searchIndex = liveIndex + 1;
+        }
+        
+        console.log(`📊 Found ${allLiveMatches.length} occurrences of "直播" in HTML`);
+        
+        for (let i = 0; i < Math.min(allLiveMatches.length, 5); i++) {
+            const match = allLiveMatches[i];
+            console.log(`   ${i + 1}. Position ${match.position}: "${match.context}"`);
+        }
+        
+        if (allLiveMatches.length > 0) {
+            console.log('🔴 FOUND "直播" IN HTML - USER IS LIVE!');
+            return true;
+        }
+        
+        // DEBUG: Search for common live-related terms
+        console.log('\n🔍 Searching for other live indicators...');
+        const liveTerms = ['LIVE', 'live', 'broadcast', '直播中', '現在直播', 'streaming'];
+        
+        for (const term of liveTerms) {
+            const termIndex = html.indexOf(term);
+            if (termIndex !== -1) {
+                const context = html.substring(Math.max(0, termIndex - 100), termIndex + 100);
+                console.log(`🔍 Found "${term}" at position ${termIndex}: "${context.replace(/\s+/g, ' ').substring(0, 200)}"`);
             }
         }
         
-        // Method 2: Check for English "LIVE" as backup
-        console.log('🔎 Checking for English "LIVE" badge...');
-        const englishLivePatterns = [
-            /<span[^>]*>LIVE<\/span>/gi,
-            /\bLIVE\b/g
-        ];
+        // DEBUG: Show profile username area
+        console.log('\n🔍 Looking for profile username area...');
+        const usernamePattern = new RegExp(`${TARGET_USERNAME}`, 'gi');
+        const usernameMatches = html.match(usernamePattern);
+        if (usernameMatches) {
+            console.log(`📊 Found ${usernameMatches.length} mentions of username`);
+            
+            // Find the first username mention and show context
+            const firstUsernameIndex = html.indexOf(TARGET_USERNAME);
+            const usernameContext = html.substring(Math.max(0, firstUsernameIndex - 500), firstUsernameIndex + 500);
+            console.log(`📋 Username context: ${usernameContext.replace(/\s+/g, ' ').substring(0, 800)}`);
+        }
         
-        for (const pattern of englishLivePatterns) {
-            const matches = html.match(pattern);
-            if (matches) {
-                // Filter out CSS and other false positives
-                const validMatches = matches.filter(match => 
-                    !match.includes('--') && 
-                    !match.includes('border-radius') &&
-                    !match.includes('css')
-                );
-                
-                if (validMatches.length > 0) {
-                    console.log(`🔴 LIVE DETECTED! English LIVE found: ${validMatches[0]}`);
-                    return true;
-                }
+        // DEBUG: Look for span elements that might contain live indicators
+        console.log('\n🔍 Analyzing span elements...');
+        const spanRegex = /<span[^>]*>([^<]+)<\/span>/gi;
+        let spanMatch;
+        let spanCount = 0;
+        
+        while ((spanMatch = spanRegex.exec(html)) !== null && spanCount < 20) {
+            spanCount++;
+            const spanContent = spanMatch[1].trim();
+            
+            if (spanContent.includes('直播') || spanContent.includes('LIVE') || spanContent.includes('live')) {
+                console.log(`🔍 Span ${spanCount} with live content: "${spanMatch[0].substring(0, 200)}"`);
+            } else if (spanContent.length < 20 && spanContent.length > 0) {
+                // Show short span contents that might be relevant
+                console.log(`🔍 Span ${spanCount}: "${spanContent}"`);
             }
         }
+        
+        console.log('🔍 === END DEBUG ANALYSIS ===\n');
         
         console.log('⚫ No live indicators found - user is not live');
         return false;
@@ -296,8 +338,8 @@ async function startMonitoring() {
         console.error('❌ Initial check failed:', error);
     }
     
-    // Monitor every 1 minute for more responsive detection
-    console.log('⏰ Starting monitoring loop (every 1 minute)...');
+    // Monitor every 2 minutes for debugging (less frequent to see logs clearly)
+    console.log('⏰ Starting monitoring loop (every 2 minutes)...');
     setInterval(async () => {        
         try {
             const currentlyLive = await checkLiveStatus();
@@ -322,7 +364,7 @@ async function startMonitoring() {
         } catch (error) {
             console.error('❌ Error in monitoring loop:', error);
         }
-    }, 60 * 1000); // Check every 1 minute
+    }, 2 * 60 * 1000); // Check every 2 minutes
     
     // Heartbeat every 10 minutes
     setInterval(() => {
