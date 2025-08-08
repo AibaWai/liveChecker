@@ -2,8 +2,8 @@
 FROM mcr.microsoft.com/playwright:v1.46.0-jammy
 
 WORKDIR /app
-COPY package.json package-lock.json* ./
-RUN npm ci
+COPY package*.json ./
+RUN npm install --no-audit --no-fund
 
 COPY tsconfig.json ./
 COPY src ./src
