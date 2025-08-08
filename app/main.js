@@ -118,230 +118,188 @@ function makeRequest(url, options = {}) {
     });
 }
 
-// Multiple request strategies
-async function checkLiveWithMultipleStrategies() {
-    const strategies = [
-        // Strategy 1: Chrome Desktop
-        {
-            name: 'Chrome Desktop',
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
-                'Accept-Language': 'zh-TW,zh;q=0.9,en;q=0.8',
-                'Accept-Encoding': 'gzip, deflate, br',
-                'Cookie': `sessionid=${IG_SESSION_ID}; csrftoken=${IG_CSRF_TOKEN}; ds_user_id=${IG_DS_USER_ID}`,
-                'Sec-Ch-Ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
-                'Sec-Ch-Ua-Mobile': '?0',
-                'Sec-Ch-Ua-Platform': '"Windows"',
-                'Sec-Fetch-Dest': 'document',
-                'Sec-Fetch-Mode': 'navigate',
-                'Sec-Fetch-Site': 'none',
-                'Sec-Fetch-User': '?1',
-                'Upgrade-Insecure-Requests': '1'
-            }
-        }
-    ];
-    
-    for (const strategy of strategies) {
-        try {
-            console.log(`🔎 Trying ${strategy.name} strategy...`);
-            
-            const url = `https://www.instagram.com/${TARGET_USERNAME}/`;
-            const response = await makeRequest(url, {
-                method: 'GET',
-                headers: strategy.headers
-            });
-            
-            if (response.statusCode === 200) {
-                const html = response.data;
-                console.log(`📊 ${strategy.name}: ${html.length} chars received`);
-                
-                // Enhanced live detection with multiple approaches
-                const liveCheck = await analyzeHTMLForLive(html, strategy.name);
-                if (liveCheck) {
-                    console.log(`🔴 LIVE detected using ${strategy.name}!`);
-                    return true;
-                }
-            } else {
-                console.log(`❌ ${strategy.name}: HTTP ${response.statusCode}`);
-            }
-            
-        } catch (error) {
-            console.log(`❌ ${strategy.name} failed: ${error.message}`);
-        }
-    }
-    
-    return false;
-}
-
-// DEBUG: Enhanced HTML analysis with detailed logging
-async function analyzeHTMLForLive(html, strategy) {
-    console.log(`🔍 === DETAILED DEBUG ANALYSIS FROM ${strategy} ===`);
-    
-    // Method 1: Direct text search with FULL context analysis
-    const liveTexts = ['直播', 'LIVE', 'Live'];
-    
-    for (const liveText of liveTexts) {
-        const indices = [];
-        let index = html.indexOf(liveText);
+// Check live status by examining actual HTML content
+async function checkLiveStatus() {
+    try {
+        console.log(`🔍 Checking if @${TARGET_USERNAME} is live...`);
         
-        while (index !== -1) {
-            indices.push(index);
-            index = html.indexOf(liveText, index + 1);
+        const headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+            'Accept-Language': 'zh-TW,zh;q=0.9,en;q=0.8',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Cookie': `sessionid=${IG_SESSION_ID}; csrftoken=${IG_CSRF_TOKEN}; ds_user_id=${IG_DS_USER_ID}`,
+            'Sec-Ch-Ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+            'Sec-Ch-Ua-Mobile': '?0',
+            'Sec-Ch-Ua-Platform': '"Windows"',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+            'Sec-Fetch-User': '?1',
+            'Upgrade-Insecure-Requests': '1'
+        };
+        
+        const url = `https://www.instagram.com/${TARGET_USERNAME}/`;
+        const response = await makeRequest(url, {
+            method: 'GET',
+            headers: headers
+        });
+        
+        if (response.statusCode !== 200) {
+            console.log(`❌ HTTP ${response.statusCode}`);
+            return false;
         }
         
-        if (indices.length > 0) {
-            console.log(`\n🔍 === ANALYZING "${liveText}" (${indices.length} occurrences) ===`);
-            
-            for (let i = 0; i < Math.min(indices.length, 10); i++) {
-                const idx = indices[i];
-                const context = html.substring(Math.max(0, idx - 300), idx + 300);
-                
-                console.log(`\n--- Occurrence ${i + 1} at position ${idx} ---`);
-                console.log(`Context: "${context.replace(/\s+/g, ' ')}"`);
-                
-                // Detailed analysis
-                const analysis = analyzeContextDetailed(context, liveText);
-                console.log(`Analysis: ${JSON.stringify(analysis, null, 2)}`);
-                
-                if (analysis.isRealLive) {
-                    console.log(`🔴 REAL LIVE INDICATOR FOUND AT OCCURRENCE ${i + 1}!`);
-                    console.log(`🎯 Context: "${context.replace(/\s+/g, ' ').substring(0, 200)}"`);
-                    return true;
-                }
-            }
-        } else {
-            console.log(`❌ No occurrences of "${liveText}" found`);
-        }
-    }
-    
-    // Method 2: Search for specific HTML patterns
-    console.log(`\n🔍 === SEARCHING FOR HTML PATTERNS ===`);
-    
-    const htmlPatterns = [
-        // Pattern from your original HTML
-        /<span[^>]*style="[^"]*border:\s*2px\s+solid[^"]*"[^>]*>[^<]*<\/span>/gi,
-        /<span[^>]*>直播<\/span>/gi,
-        /<div[^>]*class="[^"]*x6s0dn4[^"]*"[^>]*>/gi,
-        /<span[^>]*class="[^"]*x972fbf[^"]*"[^>]*>/gi
-    ];
-    
-    for (let i = 0; i < htmlPatterns.length; i++) {
-        const pattern = htmlPatterns[i];
-        const matches = html.match(pattern);
+        const html = response.data;
+        console.log(`📊 Received HTML: ${html.length} characters`);
         
-        if (matches) {
-            console.log(`\n📋 Pattern ${i + 1} found ${matches.length} matches:`);
-            for (let j = 0; j < Math.min(matches.length, 3); j++) {
-                console.log(`   Match ${j + 1}: "${matches[j]}"`);
-                
-                // Check if this match contains live indicators
-                if (matches[j].includes('直播') || matches[j].includes('LIVE')) {
-                    console.log(`🔴 LIVE PATTERN MATCH FOUND!`);
-                    return true;
-                }
-            }
-        } else {
-            console.log(`❌ Pattern ${i + 1}: No matches`);
-        }
-    }
-    
-    // Method 3: Search for JSON data
-    console.log(`\n🔍 === SEARCHING FOR JSON DATA ===`);
-    
-    // Look for _sharedData
-    const sharedDataMatch = html.match(/window\._sharedData\s*=\s*({.*?});/s);
-    if (sharedDataMatch) {
-        console.log(`📦 Found _sharedData (${sharedDataMatch[1].length} chars)`);
+        // === DETAILED HTML CONTENT ANALYSIS ===
+        console.log('\n🔍 === ANALYZING ACTUAL HTML CONTENT ===');
         
-        const jsonStr = sharedDataMatch[1];
+        // Show HTML structure
+        console.log('\n📋 HTML Document Structure:');
+        const docTypeMatch = html.match(/<!DOCTYPE[^>]*>/i);
+        console.log(`   DOCTYPE: ${docTypeMatch ? docTypeMatch[0] : 'Not found'}`);
         
-        // Check for live indicators in JSON
-        const liveJsonPatterns = [
-            '"is_live":true',
-            '"broadcast_status":"active"',
-            '"media_type":4',
-            'GraphLiveVideo'
+        const htmlTagMatch = html.match(/<html[^>]*>/i);
+        console.log(`   HTML tag: ${htmlTagMatch ? htmlTagMatch[0].substring(0, 100) + '...' : 'Not found'}`);
+        
+        const titleMatch = html.match(/<title[^>]*>([^<]*)<\/title>/i);
+        console.log(`   Title: ${titleMatch ? titleMatch[1] : 'Not found'}`);
+        
+        const bodyMatch = html.match(/<body[^>]*>/i);
+        console.log(`   Body tag: ${bodyMatch ? bodyMatch[0].substring(0, 100) + '...' : 'Not found'}`);
+        
+        // Show first 2000 characters of HTML
+        console.log('\n📄 HTML Content (first 2000 chars):');
+        console.log('='.repeat(80));
+        console.log(html.substring(0, 2000));
+        console.log('='.repeat(80));
+        
+        // Show last 1000 characters of HTML
+        console.log('\n📄 HTML Content (last 1000 chars):');
+        console.log('='.repeat(80));
+        console.log(html.substring(Math.max(0, html.length - 1000)));
+        console.log('='.repeat(80));
+        
+        // Look for main content area
+        console.log('\n🔍 Searching for main content structures...');
+        
+        const mainPatterns = [
+            /<main[^>]*>/i,
+            /<div[^>]*id="react-root"[^>]*>/i,
+            /<div[^>]*role="main"[^>]*>/i,
+            /<section[^>]*>/i,
+            /<article[^>]*>/i,
+            /<div[^>]*class="[^"]*container[^"]*"[^>]*>/i
         ];
         
-        for (const pattern of liveJsonPatterns) {
-            if (jsonStr.includes(pattern)) {
-                console.log(`🔴 LIVE JSON PATTERN FOUND: ${pattern}`);
+        for (let i = 0; i < mainPatterns.length; i++) {
+            const pattern = mainPatterns[i];
+            const match = html.match(pattern);
+            if (match) {
+                console.log(`✅ Found main structure ${i + 1}: ${match[0]}`);
                 
-                // Show context
-                const index = jsonStr.indexOf(pattern);
-                const context = jsonStr.substring(Math.max(0, index - 200), index + 200);
-                console.log(`🎯 JSON Context: ${context}`);
-                return true;
+                // Show content around this structure
+                const index = html.indexOf(match[0]);
+                const surrounding = html.substring(index, index + 500);
+                console.log(`   Content: ${surrounding.replace(/\s+/g, ' ')}`);
+            } else {
+                console.log(`❌ Main pattern ${i + 1}: Not found`);
             }
         }
         
-        console.log(`❌ No live indicators in _sharedData`);
-    } else {
-        console.log(`❌ No _sharedData found`);
-    }
-    
-    console.log(`\n🔍 === DEBUG ANALYSIS COMPLETE ===`);
-    return false;
-}
-
-// Detailed context analysis with full logging
-function analyzeContextDetailed(context, liveText) {
-    const contextLower = context.toLowerCase();
-    
-    // Check for false positives
-    const falsePositives = [
-        '--ig-live',
-        'css',
-        'stylesheet', 
-        'script',
-        'comment',
-        'border-radius',
-        'font-family',
-        'padding',
-        'margin',
-        'variable',
-        'color:',
-        'background:'
-    ];
-    
-    const foundFalsePositives = [];
-    for (const fp of falsePositives) {
-        if (contextLower.includes(fp)) {
-            foundFalsePositives.push(fp);
+        // Check for JavaScript/React content
+        console.log('\n🔍 Checking for JavaScript/React content...');
+        const jsPatterns = [
+            /window\._sharedData/,
+            /react/i,
+            /__d\(/,
+            /require\(/,
+            /"props":/,
+            /"state":/
+        ];
+        
+        for (const pattern of jsPatterns) {
+            const match = html.match(pattern);
+            if (match) {
+                console.log(`✅ Found JS pattern: ${pattern} -> "${match[0]}"`);
+            } else {
+                console.log(`❌ JS pattern not found: ${pattern}`);
+            }
         }
-    }
-    
-    // Look for positive indicators
-    const positiveIndicators = [
-        '<span',
-        '<div',
-        'class=',
-        'style="border:',
-        'font-size:',
-        'border-radius:'
-    ];
-    
-    const foundPositiveIndicators = [];
-    for (const pi of positiveIndicators) {
-        if (contextLower.includes(pi)) {
-            foundPositiveIndicators.push(pi);
+        
+        // Check what type of page we're getting
+        console.log('\n🔍 Page Type Analysis:');
+        
+        if (html.includes('Log in')) {
+            console.log('🚨 This appears to be a LOGIN PAGE!');
+            console.log('   Possible reasons: Cookies expired, IP blocked, or access denied');
+            return false;
         }
+        
+        if (html.length < 10000) {
+            console.log('⚠️ HTML is suspiciously short - might be an error page');
+        }
+        
+        if (html.includes('error') || html.includes('Error')) {
+            console.log('⚠️ HTML contains error keywords');
+        }
+        
+        if (html.includes(TARGET_USERNAME)) {
+            console.log(`✅ HTML contains target username: ${TARGET_USERNAME}`);
+        } else {
+            console.log(`❌ HTML does NOT contain target username: ${TARGET_USERNAME}`);
+        }
+        
+        // Look for specific Instagram elements
+        console.log('\n🔍 Looking for Instagram-specific elements...');
+        
+        const igElements = [
+            'instagram',
+            'profile',
+            'avatar',
+            'follow',
+            'post',
+            'story',
+            'bio'
+        ];
+        
+        for (const element of igElements) {
+            if (html.toLowerCase().includes(element)) {
+                console.log(`✅ Found Instagram element: ${element}`);
+            } else {
+                console.log(`❌ Missing Instagram element: ${element}`);
+            }
+        }
+        
+        // Finally, check for any Chinese text
+        console.log('\n🔍 Checking for Chinese text...');
+        const chineseMatches = html.match(/[\u4e00-\u9fff]+/g);
+        if (chineseMatches && chineseMatches.length > 0) {
+            const uniqueChinese = [...new Set(chineseMatches)];
+            console.log(`✅ Found Chinese text (${uniqueChinese.length} unique): ${uniqueChinese.slice(0, 10).join(', ')}`);
+            
+            // Check specifically for live-related Chinese
+            const liveTerms = ['直播', '直播中', '現在直播', '實況'];
+            for (const term of liveTerms) {
+                if (html.includes(term)) {
+                    console.log(`🔴 FOUND LIVE TERM: ${term}`);
+                    return true;
+                }
+            }
+        } else {
+            console.log('❌ No Chinese text found');
+        }
+        
+        console.log('\n🔍 === HTML ANALYSIS COMPLETE ===');
+        
+        return false;
+        
+    } catch (error) {
+        console.error('❌ Error checking live status:', error);
+        return false;
     }
-    
-    // Determine if it's real
-    const hasFalsePositives = foundFalsePositives.length > 0;
-    const hasPositiveIndicators = foundPositiveIndicators.length >= 2;
-    const isRealLive = !hasFalsePositives && hasPositiveIndicators;
-    
-    return {
-        liveText,
-        foundFalsePositives,
-        foundPositiveIndicators,
-        hasFalsePositives,
-        hasPositiveIndicators,
-        isRealLive
-    };
 }
 
 // Simple login verification
@@ -373,7 +331,7 @@ async function verifyInstagramLogin() {
 
 // Main monitoring loop
 async function startMonitoring() {
-    console.log(`🚀 Starting Instagram Live monitoring for @${TARGET_USERNAME} (DEBUG Context Analysis)`);
+    console.log(`🚀 Starting Instagram Live monitoring for @${TARGET_USERNAME} (HTML Content Analysis)`);
     
     // Verify login first
     const loginValid = await verifyInstagramLogin();
@@ -387,12 +345,12 @@ async function startMonitoring() {
     }
     
     console.log('✅ Instagram login verified!');
-    await sendDiscordMessage(`🤖 Instagram Live Monitor started for @${TARGET_USERNAME} (DEBUG) ✅`);
+    await sendDiscordMessage(`🤖 Instagram Live Monitor started for @${TARGET_USERNAME} (HTML Analysis) ✅`);
     
     // Initial check
     console.log('🔎 Performing initial live status check...');
     try {
-        const initialStatus = await checkLiveWithMultipleStrategies();
+        const initialStatus = await checkLiveStatus();
         isLiveNow = initialStatus;
         
         if (initialStatus) {
@@ -404,38 +362,8 @@ async function startMonitoring() {
         console.error('❌ Initial check failed:', error);
     }
     
-    // Monitor every 60 seconds for debugging
-    console.log('⏰ Starting monitoring loop (every 60 seconds)...');
-    setInterval(async () => {        
-        try {
-            const currentlyLive = await checkLiveWithMultipleStrategies();
-            
-            // Status changed to live
-            if (currentlyLive && !isLiveNow) {
-                isLiveNow = true;
-                console.log('🔴 STATUS CHANGE: User went LIVE!');
-                await sendDiscordMessage(`🔴 @${TARGET_USERNAME} is now LIVE on Instagram! 🎥\nhttps://www.instagram.com/${TARGET_USERNAME}/`);
-            }
-            // Status changed to offline
-            else if (!currentlyLive && isLiveNow) {
-                isLiveNow = false;
-                console.log('⚫ STATUS CHANGE: User went offline');
-                await sendDiscordMessage(`⚫ @${TARGET_USERNAME} has ended their Instagram Live stream.`);
-            }
-            // No change
-            else {
-                console.log(`📊 Status unchanged: ${currentlyLive ? '🔴 LIVE' : '⚫ Offline'}`);
-            }
-            
-        } catch (error) {
-            console.error('❌ Error in monitoring loop:', error);
-        }
-    }, 60 * 1000); // Check every 60 seconds for debugging
-    
-    // Heartbeat every 10 minutes
-    setInterval(() => {
-        console.log(`💓 Monitor active - @${TARGET_USERNAME} | ${isLiveNow ? '🔴 LIVE' : '⚫ Offline'} | ${new Date().toLocaleString('zh-TW')}`);
-    }, 10 * 60 * 1000);
+    // For debugging, only run once
+    console.log('🔍 DEBUG: Running single check only');
 }
 
 // Handle process termination
