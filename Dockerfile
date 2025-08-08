@@ -30,10 +30,11 @@ RUN apt-get update && apt-get install -y \
     libgbm1 \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /app
+
+    WORKDIR /app
 
 # Copy package files first for better caching
-COPY app/package*.json ./
+COPY app/package.json ./
 
 # Install npm dependencies
 RUN npm install --only=production
