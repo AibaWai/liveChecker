@@ -1,10 +1,11 @@
 {
-  "name": "instagram-live-monitor-html",
-  "version": "1.0.0",
-  "description": "Instagram Live monitor using HTML detection",
+  "name": "instagram-live-monitor-enhanced",
+  "version": "2.0.0",
+  "description": "Enhanced Instagram Live monitor with multiple detection methods",
   "main": "main.js",
   "scripts": {
-    "start": "node main.js"
+    "start": "node main.js",
+    "analyze": "node html-analyzer.js"
   },
   "keywords": [
     "instagram",
@@ -13,7 +14,8 @@
     "discord",
     "bot",
     "html",
-    "detection"
+    "detection",
+    "enhanced"
   ],
   "author": "",
   "license": "MIT",
