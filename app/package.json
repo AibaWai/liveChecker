@@ -1,11 +1,12 @@
 {
   "name": "instagram-live-monitor-enhanced",
-  "version": "2.0.0",
-  "description": "Enhanced Instagram Live monitor with multiple detection methods",
+  "version": "3.0.0",
+  "description": "Enhanced Instagram Live monitor with multi-strategy detection and anti-detection measures",
   "main": "main.js",
   "scripts": {
     "start": "node main.js",
-    "analyze": "node html-analyzer.js"
+    "health": "node health-server.js",
+    "dev": "node main.js"
   },
   "keywords": [
     "instagram",
@@ -13,9 +14,9 @@
     "monitor",
     "discord",
     "bot",
-    "html",
     "detection",
-    "enhanced"
+    "anti-detection",
+    "multi-strategy"
   ],
   "author": "",
   "license": "MIT",
@@ -24,5 +25,9 @@
   },
   "engines": {
     "node": ">=18.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "your-repo-url"
   }
 }
