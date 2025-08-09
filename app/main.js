@@ -29,6 +29,306 @@ let sessionData = {
 
 // Discord command handling
 
+// 添加到你的 main.js 中的新檢測方法
+
+// 嘗試多個 Instagram API 端點
+async function checkInstagramAlternativeAPIs(username) {
+    console.log('\n🌐 === Trying Alternative Instagram APIs ===');
+    
+    const endpoints = [
+        // 1. Stories API (可能包含直播)
+        `https://www.instagram.com/api/v1/feed/reels_media/?target_user_id=${username}`,
+        
+        // 2. User feed API
+        `https://www.instagram.com/api/v1/feed/user/${username}/`,
+        
+        // 3. GraphQL queries (需要 query_hash)
+        `https://www.instagram.com/graphql/query/`,
+        
+        // 4. 移動端 API
+        `https://i.instagram.com/api/v1/users/${username}/info/`,
+        
+        // 5. 直播專用 API
+        `https://www.instagram.com/api/v1/live/${username}/info/`,
+        
+        // 6. Stories endpoint
+        `https://www.instagram.com/stories/${username}/`,
+        
+        // 7. 另一個 profile API
+        `https://www.instagram.com/${username}/?__a=1&__d=dis`,
+    ];
+    
+    const results = {};
+    
+    for (let i = 0; i < endpoints.length; i++) {
+        const endpoint = endpoints[i];
+        const endpointName = `api_${i + 1}`;
+        
+        try {
+            console.log(`🔍 Trying endpoint ${i + 1}: ${endpoint}`);
+            
+            const apiHeaders = {
+                'User-Agent': getRandomUserAgent(),
+                'Accept': 'application/json, text/plain, */*',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'X-Requested-With': 'XMLHttpRequest',
+                'Referer': `https://www.instagram.com/${username}/`,
+                'Sec-Fetch-Dest': 'empty',
+                'Sec-Fetch-Mode': 'cors',
+                'Sec-Fetch-Site': 'same-origin'
+            };
+            
+            if (sessionData.hasValidSession) {
+                apiHeaders['Cookie'] = sessionData.cookies;
+                apiHeaders['X-CSRFToken'] = IG_CSRF_TOKEN;
+                apiHeaders['X-IG-App-ID'] = '936619743392459';
+            }
+            
+            const response = await makeRequest(endpoint, {
+                method: 'GET',
+                headers: apiHeaders
+            });
+            
+            console.log(`   Status: ${response.statusCode}`);
+            
+            if (response.statusCode === 200) {
+                console.log(`   ✅ Success! Response length: ${response.data.length}`);
+                
+                // 保存回應
+                const savedFile = await saveHTMLForAnalysis(response.data, `alt_api_${i + 1}`);
+                
+                try {
+                    const jsonData = JSON.parse(response.data);
+                    
+                    // 檢查直播指標
+                    const liveFound = checkAnyLiveIndicators(jsonData, endpointName);
+                    results[endpointName] = liveFound;
+                    
+                    if (liveFound) {
+                        console.log(`   🔴 LIVE DETECTED in ${endpointName}!`);
+                        await sendDiscordMessage(`🔴 **Live detected in ${endpointName}!**\nEndpoint: ${endpoint}`);
+                    }
+                    
+                } catch (e) {
+                    console.log(`   ⚠️ Not JSON format, checking as HTML...`);
+                    const htmlLive = checkHTMLForLiveStatus(response.data);
+                    results[endpointName] = htmlLive;
+                    
+                    if (htmlLive) {
+                        console.log(`   🔴 LIVE DETECTED in ${endpointName} HTML!`);
+                        await sendDiscordMessage(`🔴 **Live detected in ${endpointName} HTML!**\nEndpoint: ${endpoint}`);
+                    }
+                }
+                
+            } else if (response.statusCode === 429) {
+                console.log(`   ⏸️ Rate limited, waiting...`);
+                await new Promise(resolve => setTimeout(resolve, 5000));
+                results[endpointName] = false;
+            } else {
+                console.log(`   ❌ Failed: ${response.statusCode}`);
+                results[endpointName] = false;
+            }
+            
+        } catch (error) {
+            console.log(`   ❌ Error: ${error.message}`);
+            results[endpointName] = false;
+        }
+        
+        // 避免太快的請求
+        await new Promise(resolve => setTimeout(resolve, 2000));
+    }
+    
+    console.log('\n📊 === Alternative API Results ===');
+    Object.entries(results).forEach(([api, isLive]) => {
+        console.log(`   ${api}: ${isLive ? '🔴 LIVE' : '⚫ Offline'}`);
+    });
+    
+    // 發送結果到 Discord
+    const apiSummary = Object.entries(results)
+        .map(([api, isLive]) => `${api}: ${isLive ? '🔴 LIVE' : '⚫ Offline'}`)
+        .join('\n');
+    
+    await sendDiscordMessage(`📊 **Alternative API Results:**\n\`\`\`\n${apiSummary}\n\`\`\``);
+    
+    return Object.values(results).some(result => result === true);
+}
+
+// 更全面的直播指標檢查
+function checkAnyLiveIndicators(data, source = 'unknown') {
+    console.log(`🔍 Checking live indicators in ${source}...`);
+    
+    const dataStr = JSON.stringify(data).toLowerCase();
+    
+    // 檢查關鍵詞
+    const liveKeywords = [
+        'is_live', 'islive', 'live_broadcast', 'broadcast_id', 
+        'live_stream', 'streaming', 'broadcast_status',
+        'live_video', 'video_call', 'going_live',
+        'live_viewer_count', 'live_comment_count',
+        'broadcast_owner', 'live_url'
+    ];
+    
+    const foundKeywords = [];
+    liveKeywords.forEach(keyword => {
+        if (dataStr.includes(keyword)) {
+            foundKeywords.push(keyword);
+            console.log(`   ✅ Found keyword: ${keyword}`);
+        }
+    });
+    
+    // 遞迴檢查對象
+    const liveFields = findLiveFieldsRecursive(data);
+    if (liveFields.length > 0) {
+        console.log(`   🔴 Found live fields:`);
+        liveFields.forEach(field => {
+            console.log(`      ${field.path}: ${field.value}`);
+        });
+    }
+    
+    // 檢查特定結構
+    const hasLiveContent = checkLiveContent(data);
+    if (hasLiveContent) {
+        console.log(`   🔴 Found live content structure`);
+    }
+    
+    const hasLiveIndicators = foundKeywords.length > 0 || liveFields.length > 0 || hasLiveContent;
+    
+    if (hasLiveIndicators) {
+        console.log(`   🎯 ${source}: LIVE indicators found!`);
+    } else {
+        console.log(`   ⚫ ${source}: No live indicators`);
+    }
+    
+    return hasLiveIndicators;
+}
+
+// 檢查直播內容結構
+function checkLiveContent(data) {
+    try {
+        // 檢查 stories 中的直播
+        if (data.reels_media) {
+            for (const reel of data.reels_media) {
+                if (reel.items) {
+                    for (const item of reel.items) {
+                        if (item.media_type === 4 || item.is_live === true) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        
+        // 檢查 feed 中的直播
+        if (data.items) {
+            for (const item of data.items) {
+                if (item.media_type === 4 || item.is_live === true) {
+                    return true;
+                }
+            }
+        }
+        
+        // 檢查 user 數據中的直播
+        if (data.user) {
+            const user = data.user;
+            if (user.is_live === true || user.live_broadcast_id || user.broadcast_id) {
+                return true;
+            }
+        }
+        
+        // 檢查 GraphQL 結構
+        if (data.data && data.data.user) {
+            const user = data.data.user;
+            if (user.is_live === true || user.live_broadcast_id) {
+                return true;
+            }
+        }
+        
+        return false;
+        
+    } catch (error) {
+        console.log(`   ⚠️ Error checking live content: ${error.message}`);
+        return false;
+    }
+}
+
+// 更深層的遞迴搜尋
+function findLiveFieldsRecursive(obj, path = '', maxDepth = 6, currentDepth = 0) {
+    if (currentDepth > maxDepth || !obj || typeof obj !== 'object') {
+        return [];
+    }
+    
+    const liveFields = [];
+    const liveKeywords = [
+        'is_live', 'islive', 'live', 'broadcast', 'streaming',
+        'live_broadcast_id', 'broadcast_id', 'live_status',
+        'live_stream', 'is_broadcasting', 'broadcast_status',
+        'live_viewer_count', 'live_url', 'stream_url'
+    ];
+    
+    if (Array.isArray(obj)) {
+        obj.forEach((item, index) => {
+            const arrayPath = path ? `${path}[${index}]` : `[${index}]`;
+            liveFields.push(...findLiveFieldsRecursive(item, arrayPath, maxDepth, currentDepth + 1));
+        });
+    } else {
+        for (const [key, value] of Object.entries(obj)) {
+            const currentPath = path ? `${path}.${key}` : key;
+            
+            // 檢查 key 是否包含直播相關詞彙
+            if (liveKeywords.some(keyword => key.toLowerCase().includes(keyword.toLowerCase()))) {
+                liveFields.push({ path: currentPath, value: value });
+            }
+            
+            // 檢查 value 是否為 true 且 key 可能與直播相關
+            if (value === true && /live|broadcast|stream/i.test(key)) {
+                liveFields.push({ path: currentPath, value: value });
+            }
+            
+            // 遞迴檢查嵌套對象
+            if (typeof value === 'object' && value !== null) {
+                liveFields.push(...findLiveFieldsRecursive(value, currentPath, maxDepth, currentDepth + 1));
+            }
+        }
+    }
+    
+    return liveFields;
+}
+
+// 添加新的 Discord 命令
+client.on('messageCreate', async (message) => {
+    // ... 現有命令 ...
+    
+    if (content === '!altapi') {
+        await message.reply('🔍 Testing alternative Instagram APIs...');
+        try {
+            const result = await checkInstagramAlternativeAPIs(TARGET_USERNAME);
+            const status = result ? '🔴 LIVE' : '⚫ Offline';
+            await message.reply(`📊 Alternative API check result: ${status}`);
+        } catch (error) {
+            await message.reply(`❌ Alternative API check failed: ${error.message}`);
+        }
+    }
+    
+    if (content === '!deepcheck') {
+        await message.reply('🔍 Performing deep live status check...');
+        try {
+            // 組合所有方法
+            const standardResult = await checkLiveStatusWithComparison();
+            const altApiResult = await checkInstagramAlternativeAPIs(TARGET_USERNAME);
+            
+            const finalResult = standardResult || altApiResult;
+            const status = finalResult ? '🔴 LIVE DETECTED' : '⚫ Not Live';
+            
+            await message.reply(`🎯 **Deep Check Result:** ${status}\n` +
+                `Standard APIs: ${standardResult ? '🔴' : '⚫'}\n` +
+                `Alternative APIs: ${altApiResult ? '🔴' : '⚫'}`);
+                
+        } catch (error) {
+            await message.reply(`❌ Deep check failed: ${error.message}`);
+        }
+    }
+});
+
 // 在你的 main.js 中的 Discord command handling 部分添加這些命令
 
 client.on('messageCreate', async (message) => {
