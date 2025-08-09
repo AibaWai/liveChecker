@@ -18,11 +18,18 @@ const client = new Client({
 });
 
 let sessionData = {
-    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    cookies: `sessionid=${IG_SESSION_ID}; csrftoken=${IG_CSRF_TOKEN}; ds_user_id=${IG_DS_USER_ID}`
+    userAgent: 'Instagram 302.0.0.23.113 Android (33/13; 420dpi; 1080x2400; samsung; SM-G991B; o1s; exynos2100; en_US; 492113219)',
+    cookies: `sessionid=${IG_SESSION_ID}; csrftoken=${IG_CSRF_TOKEN}; ds_user_id=${IG_DS_USER_ID}`,
+    deviceId: 'android-' + Array.from({ length: 16 }, () => Math.floor(Math.random() * 16).toString(16)).join(''),
+    uuid: 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+        const r = Math.random() * 16 | 0;
+        const v = c == 'x' ? r : (r & 0x3 | 0x8);
+        return v.toString(16);
+    })
 };
 
 let isLiveNow = false;
+let targetUserId = null;
 
 function makeRequest(url, options = {}) {
     return new Promise((resolve, reject) => {
@@ -34,6 +41,7 @@ function makeRequest(url, options = {}) {
                 const buffer = Buffer.concat(data);
                 resolve({ 
                     statusCode: res.statusCode, 
+                    headers: res.headers,
                     data: buffer.toString('utf8')
                 });
             });
@@ -44,6 +52,11 @@ function makeRequest(url, options = {}) {
             req.destroy();
             reject(new Error('Request timeout'));
         });
+        
+        if (options.body) {
+            req.write(options.body);
+        }
+        
         req.end();
     });
 }
@@ -51,7 +64,6 @@ function makeRequest(url, options = {}) {
 async function sendDiscordMessage(message) {
     try {
         const channel = await client.channels.fetch(DISCORD_CHANNEL_ID);
-        // 確保消息不超過 Discord 限制
         if (message.length > 1900) {
             message = message.substring(0, 1900) + '...(truncated)';
         }
@@ -61,289 +73,235 @@ async function sendDiscordMessage(message) {
     }
 }
 
-// 精確的直播檢測邏輯
-function detectPreciseLiveStatus(html) {
-    console.log('\n🎯 === Precise Live Detection ===');
+// 獲取用戶 ID
+async function getUserId(username) {
+    if (targetUserId) return targetUserId;
     
-    const results = {
-        liveIndicators: [],
-        falsePositives: [],
-        jsonBlocks: [],
-        finalDecision: false,
-        confidence: 'NONE'
-    };
-    
-    // 1. 過濾掉已知的假陽性模式（靜態 UI 元素）
-    console.log('🚫 Filtering out false positives...');
-    const falsePositivePatterns = [
-        /data-sjs>/g,                           // 靜態 JavaScript 載入器
-        /--ig-live-badge:/g,                    // CSS 變量定義
-        /--live-video-border-radius:/g,         // CSS 變量定義
-        /"type":"js"/g,                         // 資源載入配置
-        /"type":"css"/g,                        // 資源載入配置
-        /is_latency_sensitive_broadcast/g,      // 通用配置
-        /streaming_implementation/g,            // 通用配置
-        /hive_streaming_video/g                 // 通用配置
-    ];
-    
-    falsePositivePatterns.forEach((pattern, idx) => {
-        const matches = html.match(pattern) || [];
-        if (matches.length > 0) {
-            results.falsePositives.push({
-                pattern: `FP${idx + 1}`,
-                count: matches.length,
-                description: 'Static UI element'
-            });
-            console.log(`   🚫 False positive ${idx + 1}: ${matches.length} matches (filtered out)`);
-        }
-    });
-    
-    // 2. 尋找真正的直播指標
-    console.log('\n🔍 Looking for genuine live indicators...');
-    
-    // 真正的直播狀態指標
-    const genuineLivePatterns = [
-        {
-            name: 'Live Badge Text',
-            pattern: /<[^>]*>[\s]*(?:直播|LIVE|Live now|正在直播)[\s]*<\/[^>]*>/gi,
-            confidence: 'HIGH'
-        },
-        {
-            name: 'Live Broadcast ID',
-            pattern: /"live_broadcast_id"\s*:\s*"[a-zA-Z0-9_-]+"/gi,
-            confidence: 'VERY_HIGH'
-        },
-        {
-            name: 'Is Live True',
-            pattern: /"is_live"\s*:\s*true/gi,
-            confidence: 'VERY_HIGH'
-        },
-        {
-            name: 'Broadcast Status Active',
-            pattern: /"broadcast_status"\s*:\s*"active"/gi,
-            confidence: 'VERY_HIGH'
-        },
-        {
-            name: 'Live Stream URL',
-            pattern: /"dash_manifest"\s*:\s*"[^"]*live[^"]*"/gi,
-            confidence: 'HIGH'
-        },
-        {
-            name: 'Live Viewer Count',
-            pattern: /"viewer_count"\s*:\s*[0-9]+/gi,
-            confidence: 'MEDIUM'
-        },
-        {
-            name: 'Live Media Type',
-            pattern: /"media_type"\s*:\s*4/gi,
-            confidence: 'HIGH'
-        }
-    ];
-    
-    genuineLivePatterns.forEach(pattern => {
-        const matches = html.match(pattern.pattern) || [];
-        if (matches.length > 0) {
-            results.liveIndicators.push({
-                name: pattern.name,
-                count: matches.length,
-                confidence: pattern.confidence,
-                examples: matches.slice(0, 2)
-            });
-            console.log(`   ✅ ${pattern.name}: ${matches.length} matches (${pattern.confidence})`);
-            matches.slice(0, 2).forEach((match, idx) => {
-                console.log(`      ${idx + 1}. ${match}`);
-            });
-        }
-    });
-    
-    // 3. 尋找和解析 JSON 數據中的用戶狀態
-    console.log('\n📦 Looking for user status in JSON...');
-    
-    // 尋找包含用戶數據的 JSON 塊
-    const jsonPatterns = [
-        /"user"\s*:\s*{[^{}]*"username"\s*:\s*"suteaka4649_"[^{}]*}/g,
-        /window\._sharedData\s*=\s*({.*?});/s,
-        /"ProfilePage"\s*:\s*\[({.*?})\]/s
-    ];
-    
-    jsonPatterns.forEach((pattern, idx) => {
-        const matches = html.match(pattern);
-        if (matches) {
-            console.log(`   📦 Found JSON pattern ${idx + 1}: ${matches.length} matches`);
-            
-            matches.forEach((match, matchIdx) => {
-                try {
-                    // 嘗試從匹配中提取 JSON
-                    let jsonStr = match;
-                    if (match.includes('window._sharedData')) {
-                        jsonStr = match.split('=')[1].replace(/;$/, '');
-                    }
-                    
-                    const jsonData = JSON.parse(jsonStr);
-                    const userStatus = extractUserLiveStatus(jsonData);
-                    
-                    if (userStatus.found) {
-                        results.jsonBlocks.push({
-                            pattern: idx + 1,
-                            match: matchIdx + 1,
-                            status: userStatus
-                        });
-                        console.log(`      ✅ User status found: ${JSON.stringify(userStatus)}`);
-                    }
-                    
-                } catch (e) {
-                    console.log(`      ❌ Failed to parse JSON block: ${e.message}`);
-                }
-            });
-        }
-    });
-    
-    // 4. 計算最終決定和置信度
-    console.log('\n🎯 Calculating final decision...');
-    
-    const veryHighIndicators = results.liveIndicators.filter(i => i.confidence === 'VERY_HIGH');
-    const highIndicators = results.liveIndicators.filter(i => i.confidence === 'HIGH');
-    const mediumIndicators = results.liveIndicators.filter(i => i.confidence === 'MEDIUM');
-    const jsonPositives = results.jsonBlocks.filter(j => j.status.isLive);
-    
-    if (veryHighIndicators.length > 0 || jsonPositives.length > 0) {
-        results.finalDecision = true;
-        results.confidence = 'VERY_HIGH';
-        console.log('   🔴 LIVE: Very high confidence indicators found');
-    } else if (highIndicators.length >= 2) {
-        results.finalDecision = true;
-        results.confidence = 'HIGH';
-        console.log('   🔴 LIVE: Multiple high confidence indicators found');
-    } else if (highIndicators.length === 1 && mediumIndicators.length >= 1) {
-        results.finalDecision = true;
-        results.confidence = 'MEDIUM';
-        console.log('   🟡 LIVE: Combined indicators suggest live status');
-    } else {
-        results.finalDecision = false;
-        results.confidence = 'NONE';
-        console.log('   ⚫ NOT LIVE: No convincing indicators found');
-    }
-    
-    return results;
-}
-
-// 從 JSON 數據中提取用戶直播狀態
-function extractUserLiveStatus(jsonData) {
-    const result = {
-        found: false,
-        isLive: false,
-        details: {}
-    };
+    console.log(`🔍 Getting user ID for @${username}...`);
     
     try {
-        // 方法 1: 直接在 user 對象中尋找
-        if (jsonData.user) {
-            result.found = true;
-            result.details.source = 'direct_user';
-            
-            if (jsonData.user.is_live === true) {
-                result.isLive = true;
-                result.details.indicator = 'is_live';
-            }
-            
-            if (jsonData.user.live_broadcast_id) {
-                result.isLive = true;
-                result.details.indicator = 'live_broadcast_id';
-                result.details.broadcastId = jsonData.user.live_broadcast_id;
-            }
-        }
+        const timestamp = Math.floor(Date.now() / 1000);
         
-        // 方法 2: 在 GraphQL 結構中尋找
-        if (jsonData.data?.user) {
-            result.found = true;
-            result.details.source = 'graphql_user';
-            
-            const user = jsonData.data.user;
-            if (user.is_live === true) {
-                result.isLive = true;
-                result.details.indicator = 'is_live';
-            }
-        }
-        
-        // 方法 3: 在 ProfilePage 中尋找
-        if (jsonData.entry_data?.ProfilePage?.[0]?.graphql?.user) {
-            result.found = true;
-            result.details.source = 'profile_page';
-            
-            const user = jsonData.entry_data.ProfilePage[0].graphql.user;
-            if (user.is_live === true) {
-                result.isLive = true;
-                result.details.indicator = 'is_live';
-            }
-        }
-        
-    } catch (error) {
-        console.log(`   ❌ Error extracting user status: ${error.message}`);
-    }
-    
-    return result;
-}
-
-// 主要檢測函數
-async function checkInstagramLive() {
-    console.log(`\n🔍 Precise Live Check for @${TARGET_USERNAME}...`);
-    
-    try {
-        const response = await makeRequest(`https://www.instagram.com/${TARGET_USERNAME}/`, {
+        const response = await makeRequest(`https://i.instagram.com/api/v1/users/web_profile_info/?username=${username}`, {
             method: 'GET',
             headers: {
                 'User-Agent': sessionData.userAgent,
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.5',
+                'Accept': 'application/json',
                 'Cookie': sessionData.cookies,
-                'Connection': 'keep-alive'
+                'X-IG-App-Locale': 'en_US',
+                'X-IG-Device-Locale': 'en_US',
+                'X-IG-Mapped-Locale': 'en_US',
+                'X-Pigeon-Session-Id': sessionData.uuid,
+                'X-Pigeon-Rawclienttime': timestamp,
+                'X-IG-Bandwidth-Speed-KBPS': '-1.000',
+                'X-IG-Bandwidth-TotalBytes-B': '0',
+                'X-IG-Bandwidth-TotalTime-MS': '0',
+                'X-IG-Connection-Type': 'WIFI',
+                'X-IG-Capabilities': '3brTvx8=',
+                'X-IG-App-ID': '567067343352427',
+                'X-IG-Device-ID': sessionData.deviceId,
+                'X-IG-Android-ID': sessionData.deviceId,
+                'Host': 'i.instagram.com'
             }
         });
         
-        if (response.statusCode !== 200) {
-            console.log(`❌ Request failed with status: ${response.statusCode}`);
+        if (response.statusCode === 200) {
+            const data = JSON.parse(response.data);
+            if (data.data?.user?.id) {
+                targetUserId = data.data.user.id;
+                console.log(`✅ Found user ID: ${targetUserId}`);
+                return targetUserId;
+            }
+        }
+        
+        console.log(`❌ Failed to get user ID: ${response.statusCode}`);
+        return null;
+        
+    } catch (error) {
+        console.error('❌ Error getting user ID:', error);
+        return null;
+    }
+}
+
+// 檢查用戶的 Story Feed（包含直播信息）
+async function checkUserStoryFeed(userId) {
+    console.log(`📺 Checking story feed for user ID: ${userId}...`);
+    
+    try {
+        const timestamp = Math.floor(Date.now() / 1000);
+        
+        const response = await makeRequest(`https://i.instagram.com/api/v1/feed/user/${userId}/story/`, {
+            method: 'GET',
+            headers: {
+                'User-Agent': sessionData.userAgent,
+                'Accept': 'application/json',
+                'Cookie': sessionData.cookies,
+                'X-IG-App-Locale': 'en_US',
+                'X-IG-Device-Locale': 'en_US',
+                'X-IG-Mapped-Locale': 'en_US',
+                'X-Pigeon-Session-Id': sessionData.uuid,
+                'X-Pigeon-Rawclienttime': timestamp,
+                'X-IG-Connection-Type': 'WIFI',
+                'X-IG-Capabilities': '3brTvx8=',
+                'X-IG-App-ID': '567067343352427',
+                'X-IG-Device-ID': sessionData.deviceId,
+                'Host': 'i.instagram.com'
+            }
+        });
+        
+        console.log(`📊 Story feed response: ${response.statusCode}`);
+        
+        if (response.statusCode === 200) {
+            const data = JSON.parse(response.data);
+            
+            // 檢查是否有 broadcast 信息
+            if (data.broadcast) {
+                console.log('🔴 BROADCAST FOUND in story feed!');
+                console.log(`📊 Broadcast data: ${JSON.stringify(data.broadcast, null, 2)}`);
+                return {
+                    isLive: true,
+                    broadcastData: data.broadcast,
+                    source: 'story_feed'
+                };
+            }
+            
+            // 檢查 reel 中的直播
+            if (data.reel && data.reel.items) {
+                for (const item of data.reel.items) {
+                    if (item.media_type === 4) { // Live video
+                        console.log('🔴 LIVE VIDEO FOUND in reel!');
+                        return {
+                            isLive: true,
+                            broadcastData: item,
+                            source: 'reel_item'
+                        };
+                    }
+                }
+            }
+            
+            console.log('⚫ No live broadcast found in story feed');
+            return { isLive: false, source: 'story_feed' };
+        }
+        
+        console.log(`❌ Story feed request failed: ${response.statusCode}`);
+        return { isLive: false, source: 'error' };
+        
+    } catch (error) {
+        console.error('❌ Error checking story feed:', error);
+        return { isLive: false, source: 'error' };
+    }
+}
+
+// 檢查直播狀態的主要 API
+async function checkUserBroadcast(userId) {
+    console.log(`🎥 Checking user broadcast for user ID: ${userId}...`);
+    
+    try {
+        const timestamp = Math.floor(Date.now() / 1000);
+        
+        // 嘗試直接的 broadcast API
+        const response = await makeRequest(`https://i.instagram.com/api/v1/live/${userId}/info/`, {
+            method: 'GET',
+            headers: {
+                'User-Agent': sessionData.userAgent,
+                'Accept': 'application/json',
+                'Cookie': sessionData.cookies,
+                'X-IG-App-Locale': 'en_US',
+                'X-IG-Device-Locale': 'en_US',
+                'X-IG-Mapped-Locale': 'en_US',
+                'X-Pigeon-Session-Id': sessionData.uuid,
+                'X-Pigeon-Rawclienttime': timestamp,
+                'X-IG-Connection-Type': 'WIFI',
+                'X-IG-Capabilities': '3brTvx8=',
+                'X-IG-App-ID': '567067343352427',
+                'X-IG-Device-ID': sessionData.deviceId,
+                'Host': 'i.instagram.com'
+            }
+        });
+        
+        console.log(`📊 Broadcast API response: ${response.statusCode}`);
+        
+        if (response.statusCode === 200) {
+            const data = JSON.parse(response.data);
+            
+            if (data.broadcast_status === 'active') {
+                console.log('🔴 ACTIVE BROADCAST FOUND!');
+                console.log(`📊 Broadcast info: ${JSON.stringify(data, null, 2)}`);
+                return {
+                    isLive: true,
+                    broadcastData: data,
+                    source: 'broadcast_api'
+                };
+            }
+            
+            console.log(`⚫ Broadcast status: ${data.broadcast_status || 'inactive'}`);
+            return { isLive: false, source: 'broadcast_api' };
+        }
+        
+        console.log(`❌ Broadcast API failed: ${response.statusCode}`);
+        return { isLive: false, source: 'error' };
+        
+    } catch (error) {
+        console.error('❌ Error checking broadcast API:', error);
+        return { isLive: false, source: 'error' };
+    }
+}
+
+// 組合檢測方法
+async function checkInstagramLivePrivateAPI() {
+    console.log(`\n🔍 Checking @${TARGET_USERNAME} using Private API methods...`);
+    
+    try {
+        // 1. 獲取用戶 ID
+        const userId = await getUserId(TARGET_USERNAME);
+        if (!userId) {
+            await sendDiscordMessage('❌ Failed to get user ID');
             return false;
         }
         
-        console.log(`✅ Got HTML content: ${response.data.length} characters`);
+        // 2. 檢查多個 API 端點
+        const results = {};
         
-        // 使用精確檢測
-        const analysis = detectPreciseLiveStatus(response.data);
+        // 方法 1: Story Feed
+        results.storyFeed = await checkUserStoryFeed(userId);
         
-        // 創建簡潔的摘要
-        const summary = `🎯 **Precise Live Analysis:**
-📊 Genuine indicators: ${analysis.liveIndicators.length}
-🚫 False positives filtered: ${analysis.falsePositives.length}
-📦 JSON blocks with user data: ${analysis.jsonBlocks.length}
-🎯 **Decision: ${analysis.finalDecision ? '🔴 LIVE' : '⚫ NOT LIVE'}**
-📈 Confidence: ${analysis.confidence}`;
+        // 方法 2: Broadcast API
+        results.broadcast = await checkUserBroadcast(userId);
+        
+        // 3. 分析結果
+        console.log('\n📊 === Private API Results ===');
+        Object.entries(results).forEach(([method, result]) => {
+            console.log(`   ${method}: ${result.isLive ? '🔴 LIVE' : '⚫ Offline'} (${result.source})`);
+        });
+        
+        // 創建報告
+        const report = `🔍 **Private API Check Results:**
 
-        await sendDiscordMessage(summary);
+**User ID:** ${userId}
+
+**Story Feed:** ${results.storyFeed.isLive ? '🔴 LIVE' : '⚫ Offline'}
+**Broadcast API:** ${results.broadcast.isLive ? '🔴 LIVE' : '⚫ Offline'}
+
+**Final Decision:** ${(results.storyFeed.isLive || results.broadcast.isLive) ? '🔴 LIVE DETECTED' : '⚫ NOT LIVE'}`;
+
+        await sendDiscordMessage(report);
         
-        // 如果找到真正的指標，顯示它們
-        if (analysis.liveIndicators.length > 0) {
-            const indicators = analysis.liveIndicators.map((ind, idx) => 
-                `${idx + 1}. ${ind.name}: ${ind.count} (${ind.confidence})`
-            ).join('\n');
+        // 如果找到直播，顯示詳細信息
+        if (results.storyFeed.isLive && results.storyFeed.broadcastData) {
+            const broadcastInfo = results.storyFeed.broadcastData;
+            const details = `📺 **Live Broadcast Details:**
+ID: ${broadcastInfo.id || 'N/A'}
+Status: ${broadcastInfo.broadcast_status || 'N/A'}
+Viewer Count: ${broadcastInfo.viewer_count || 'N/A'}
+Published: ${broadcastInfo.published_time || 'N/A'}`;
             
-            await sendDiscordMessage(`🔍 **Live Indicators Found:**\n\`\`\`\n${indicators}\n\`\`\``);
+            await sendDiscordMessage(details);
         }
         
-        // 如果找到 JSON 數據，顯示用戶狀態
-        if (analysis.jsonBlocks.length > 0) {
-            const jsonInfo = analysis.jsonBlocks.map((block, idx) => 
-                `${idx + 1}. Pattern ${block.pattern}: Live=${block.status.isLive} (${block.status.details.source})`
-            ).join('\n');
-            
-            await sendDiscordMessage(`📦 **JSON User Status:**\n\`\`\`\n${jsonInfo}\n\`\`\``);
-        }
-        
-        console.log(`🎯 Final result: ${analysis.finalDecision ? 'LIVE' : 'NOT LIVE'} (${analysis.confidence})`);
-        
-        return analysis.finalDecision;
+        return results.storyFeed.isLive || results.broadcast.isLive;
         
     } catch (error) {
-        console.error('❌ Error checking Instagram:', error);
+        console.error('❌ Error in private API check:', error);
         await sendDiscordMessage(`❌ Error: ${error.message}`);
         return false;
     }
@@ -355,35 +313,35 @@ client.on('messageCreate', async (message) => {
     
     const content = message.content.toLowerCase();
     
-    if (content === '!check') {
-        await message.reply('🎯 Running precise live detection...');
-        const isLive = await checkInstagramLive();
+    if (content === '!private') {
+        await message.reply('🔍 Checking with Private API methods...');
+        const isLive = await checkInstagramLivePrivateAPI();
         const status = isLive ? '🔴 LIVE DETECTED' : '⚫ Not Live';
-        await message.reply(`📊 **Precise Result:** ${status}`);
+        await message.reply(`📊 **Private API Result:** ${status}`);
     }
     
     if (content === '!status') {
         const status = isLiveNow ? '🔴 LIVE' : '⚫ Offline';
-        await message.reply(`📊 **Monitor Status**\nTarget: @${TARGET_USERNAME}\nCurrent: ${status}\n\n💡 Use \`!check\` for precise detection`);
+        await message.reply(`📊 **Status**\nTarget: @${TARGET_USERNAME}\nCurrent: ${status}\nUser ID: ${targetUserId || 'Not fetched'}\n\n💡 Use \`!private\` for private API check`);
     }
     
     if (content === '!monitor') {
-        await message.reply('🚀 Starting precise monitoring...');
-        startPreciseMonitoring();
+        await message.reply('🚀 Starting private API monitoring...');
+        startPrivateAPIMonitoring();
     }
     
     if (content === '!help') {
-        await message.reply(`🎯 **Precise Instagram Live Detector**\n\n\`!check\` - Run precise live detection\n\`!monitor\` - Start continuous monitoring\n\`!status\` - Check current status\n\`!help\` - Show this help`);
+        await message.reply(`🔍 **Private API Live Checker**\n\n\`!private\` - Check using private API methods\n\`!monitor\` - Start continuous monitoring\n\`!status\` - Check current status\n\`!help\` - Show this help`);
     }
 });
 
-// 精確持續監控
-function startPreciseMonitoring() {
-    console.log('🚀 Starting precise continuous monitoring...');
+// 私有 API 持續監控
+function startPrivateAPIMonitoring() {
+    console.log('🚀 Starting private API monitoring...');
     
     setInterval(async () => {
         try {
-            const currentlyLive = await checkInstagramLive();
+            const currentlyLive = await checkInstagramLivePrivateAPI();
             
             if (currentlyLive && !isLiveNow) {
                 isLiveNow = true;
@@ -404,8 +362,8 @@ function startPreciseMonitoring() {
 }
 
 client.once('ready', () => {
-    console.log(`✅ Precise detector ready as ${client.user.tag}!`);
-    sendDiscordMessage(`🎯 **Precise Instagram Live Detector Ready**\nTarget: @${TARGET_USERNAME}\n\n💡 Use \`!check\` for precise live detection\n💡 Use \`!monitor\` to start continuous monitoring`);
+    console.log(`✅ Private API checker ready as ${client.user.tag}!`);
+    sendDiscordMessage(`🔍 **Instagram Private API Checker Ready**\nTarget: @${TARGET_USERNAME}\n\n💡 Use \`!private\` to check with private API methods\n💡 Use \`!monitor\` to start continuous monitoring`);
 });
 
 client.login(DISCORD_TOKEN);
