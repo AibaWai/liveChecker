@@ -1,317 +1,212 @@
+const https = require('https');
 const { Client, GatewayIntentBits } = require('discord.js');
-const puppeteer = require('puppeteer');
 
-// Environment variables
-const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
-const DISCORD_CHANNEL_ID = process.env.DISCORD_CHANNEL_ID;
-const TARGET_USERNAME = process.env.TARGET_USERNAME;
-
-// Discord client setup
-const client = new Client({ 
-    intents: [
-        GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent
-    ]
-});
-
-let isLiveNow = false;
-let browser = null;
-let page = null;
-
-client.once('ready', () => {
-    console.log(`Logged in as ${client.user.tag}!`);
-    startMonitoring();
-});
-
-async function sendDiscordMessage(message) {
-    try {
-        const channel = await client.channels.fetch(DISCORD_CHANNEL_ID);
-        await channel.send(message);
-        console.log('Discord message sent:', message);
-    } catch (error) {
-        console.error('Failed to send Discord message:', error);
+class InstagramMobileAPI {
+    constructor() {
+        this.session = {
+            userAgent: 'Instagram 302.0.0.23.113 Android (33/13; 420dpi; 1080x2400; samsung; SM-G991B; o1s; exynos2100; en_US; 492113219)',
+            deviceId: this.generateDeviceId(),
+            uuid: this.generateUUID(),
+            sessionId: null,
+            csrfToken: null
+        };
     }
-}
-
-async function initializeBrowser() {
-    try {
-        console.log('🚀 Initializing browser...');
-        
-        browser = await puppeteer.launch({
-            headless: true,
-            args: [
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage',
-                '--disable-accelerated-2d-canvas',
-                '--no-first-run',
-                '--no-zygote',
-                '--single-process',
-                '--disable-gpu'
-            ]
-        });
-        
-        page = await browser.newPage();
-        
-        // Set realistic user agent and viewport
-        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
-        await page.setViewport({ width: 1366, height: 768 });
-        
-        // Block unnecessary resources to speed up loading
-        await page.setRequestInterception(true);
-        page.on('request', (req) => {
-            const resourceType = req.resourceType();
-            if (['image', 'stylesheet', 'font', 'media'].includes(resourceType)) {
-                req.abort();
-            } else {
-                req.continue();
-            }
-        });
-        
-        console.log('✅ Browser initialized successfully');
-        return true;
-        
-    } catch (error) {
-        console.error('❌ Failed to initialize browser:', error);
-        return false;
+    
+    generateDeviceId() {
+        return 'android-' + Array.from({ length: 16 }, () => 
+            Math.floor(Math.random() * 16).toString(16)
+        ).join('');
     }
-}
-
-async function checkLiveStatus() {
-    try {
-        console.log(`\n🔍 === Checking @${TARGET_USERNAME} live status ===`);
-        
-        if (!page) {
-            throw new Error('Browser not initialized');
-        }
-        
-        const profileUrl = `https://www.instagram.com/${TARGET_USERNAME}/`;
-        console.log(`🌐 Navigating to ${profileUrl}`);
-        
-        // Navigate to profile with timeout
-        await page.goto(profileUrl, { 
-            waitUntil: 'networkidle2', 
-            timeout: 30000 
+    
+    generateUUID() {
+        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+            const r = Math.random() * 16 | 0;
+            const v = c == 'x' ? r : (r & 0x3 | 0x8);
+            return v.toString(16);
         });
+    }
+    
+    async makeRequest(endpoint, data = null) {
+        const timestamp = Math.floor(Date.now() / 1000);
         
-        // Wait a bit for dynamic content to load
-        await page.waitForTimeout(3000);
-        
-        // Method 1: Check for live badge using multiple selectors
-        const liveSelectors = [
-            '[aria-label*="直播"]',
-            '[aria-label*="Live"]',
-            '[aria-label*="LIVE"]',
-            'span:contains("直播")',
-            'span:contains("LIVE")',
-            'div:contains("直播")',
-            'div:contains("LIVE")',
-            '[data-testid*="live"]',
-            '[class*="live"]',
-            '.live-badge'
-        ];
-        
-        console.log('🔍 Checking for live indicators...');
-        
-        for (const selector of liveSelectors) {
-            try {
-                const element = await page.$(selector);
-                if (element) {
-                    const text = await page.evaluate(el => el.textContent, element);
-                    console.log(`🔴 LIVE DETECTED: Found "${text}" with selector "${selector}"`);
-                    return true;
-                }
-            } catch (e) {
-                // Selector not found, continue
+        const options = {
+            hostname: 'i.instagram.com',
+            path: `/api/v1/${endpoint}`,
+            method: data ? 'POST' : 'GET',
+            headers: {
+                'User-Agent': this.session.userAgent,
+                'X-IG-App-Locale': 'en_US',
+                'X-IG-Device-Locale': 'en_US',
+                'X-IG-Mapped-Locale': 'en_US',
+                'X-Pigeon-Session-Id': this.session.uuid,
+                'X-Pigeon-Rawclienttime': timestamp,
+                'X-IG-Bandwidth-Speed-KBPS': '-1.000',
+                'X-IG-Bandwidth-TotalBytes-B': '0',
+                'X-IG-Bandwidth-TotalTime-MS': '0',
+                'X-IG-App-Startup-Country': 'US',
+                'X-Bloks-Version-Id': 'abcd1234567890abcdef1234567890abcdef1234',
+                'X-IG-WWW-Claim': '0',
+                'X-Bloks-Is-Layout-RTL': 'false',
+                'X-IG-Device-ID': this.session.deviceId,
+                'X-IG-Family-Device-ID': this.session.uuid,
+                'X-IG-Android-ID': this.session.deviceId,
+                'Accept-Language': 'en-US',
+                'X-IG-Timezone-Offset': '0',
+                'X-IG-Connection-Type': 'WIFI',
+                'X-IG-Capabilities': '3brTvx8=',
+                'X-IG-App-ID': '567067343352427',
+                'Accept-Encoding': 'gzip, deflate',
+                'Host': 'i.instagram.com',
+                'X-FB-HTTP-Engine': 'Liger',
+                'Connection': 'keep-alive'
             }
+        };
+        
+        if (data) {
+            options.headers['Content-Type'] = 'application/x-www-form-urlencoded; charset=UTF-8';
+            options.headers['Content-Length'] = Buffer.byteLength(data);
         }
         
-        // Method 2: Check page content for live indicators
-        const pageContent = await page.content();
-        const liveKeywords = ['直播', 'LIVE', 'Live', 'En vivo', 'Live now'];
-        
-        for (const keyword of liveKeywords) {
-            // Look for the keyword in specific contexts that indicate live status
-            const livePatterns = [
-                new RegExp(`<span[^>]*[^>]*>${keyword}</span>`, 'i'),
-                new RegExp(`aria-label="[^"]*${keyword}[^"]*"`, 'i'),
-                new RegExp(`<div[^>]*live[^>]*>[^<]*${keyword}`, 'i'),
-                new RegExp(`${keyword}.*broadcast`, 'i')
-            ];
-            
-            for (const pattern of livePatterns) {
-                if (pattern.test(pageContent)) {
-                    console.log(`🔴 LIVE DETECTED: Found "${keyword}" in page content`);
-                    return true;
-                }
-            }
-        }
-        
-        // Method 3: Check for live broadcast URL patterns
-        const url = page.url();
-        if (url.includes('/live/') || url.includes('broadcast')) {
-            console.log('🔴 LIVE DETECTED: URL contains live/broadcast');
-            return true;
-        }
-        
-        // Method 4: Check for specific Instagram live elements
-        try {
-            const liveElement = await page.evaluate(() => {
-                // Look for elements that typically contain live status
-                const elements = document.querySelectorAll('*');
-                for (let el of elements) {
-                    const text = el.textContent || '';
-                    const ariaLabel = el.getAttribute('aria-label') || '';
-                    
-                    if ((text.includes('直播') || text.includes('LIVE')) && 
-                        (el.className.includes('badge') || 
-                         el.tagName === 'SPAN' || 
-                         ariaLabel.includes('live'))) {
-                        return {
-                            text: text,
-                            className: el.className,
-                            tagName: el.tagName,
-                            ariaLabel: ariaLabel
-                        };
+        return new Promise((resolve, reject) => {
+            const req = https.request(options, (res) => {
+                let responseData = '';
+                
+                res.on('data', chunk => {
+                    responseData += chunk;
+                });
+                
+                res.on('end', () => {
+                    try {
+                        const parsed = JSON.parse(responseData);
+                        resolve({
+                            statusCode: res.statusCode,
+                            data: parsed,
+                            headers: res.headers
+                        });
+                    } catch (e) {
+                        resolve({
+                            statusCode: res.statusCode,
+                            data: responseData,
+                            headers: res.headers
+                        });
                     }
-                }
-                return null;
+                });
             });
             
-            if (liveElement) {
-                console.log('🔴 LIVE DETECTED: Found live element:', liveElement);
-                return true;
-            }
-        } catch (e) {
-            console.log('⚠️ Error in live element check:', e.message);
-        }
-        
-        console.log('⚫ No live indicators found');
-        return false;
-        
-    } catch (error) {
-        console.error('❌ Error checking live status:', error);
-        
-        // Try to recover by reinitializing browser
-        try {
-            console.log('🔄 Attempting to recover browser...');
-            await closeBrowser();
-            await initializeBrowser();
-        } catch (recoveryError) {
-            console.error('❌ Failed to recover browser:', recoveryError);
-        }
-        
-        return false;
-    }
-}
-
-async function closeBrowser() {
-    try {
-        if (page) {
-            await page.close();
-            page = null;
-        }
-        if (browser) {
-            await browser.close();
-            browser = null;
-        }
-        console.log('🔒 Browser closed');
-    } catch (error) {
-        console.error('❌ Error closing browser:', error);
-    }
-}
-
-async function startMonitoring() {
-    console.log(`🚀 Starting Instagram Live monitoring for @${TARGET_USERNAME} (Puppeteer v3)`);
-    
-    // Initialize browser
-    const browserReady = await initializeBrowser();
-    if (!browserReady) {
-        const errorMsg = '❌ Failed to initialize browser!';
-        console.error(errorMsg);
-        await sendDiscordMessage(errorMsg);
-        return;
-    }
-    
-    await sendDiscordMessage(`🤖 Instagram Live Monitor started for @${TARGET_USERNAME} (Puppeteer v3) ✅\n\n🌐 使用真實瀏覽器檢測`);
-    
-    // Initial check
-    console.log('🔎 Performing initial live status check...');
-    try {
-        const initialStatus = await checkLiveStatus();
-        isLiveNow = initialStatus;
-        
-        if (initialStatus) {
-            await sendDiscordMessage(`🔴 @${TARGET_USERNAME} is currently LIVE! 🎥\nhttps://www.instagram.com/${TARGET_USERNAME}/`);
-        } else {
-            console.log('✅ Initial check complete - not currently live');
-        }
-    } catch (error) {
-        console.error('❌ Initial check failed:', error);
-    }
-    
-    // Monitor every 2 minutes (slightly longer to avoid detection)
-    console.log('⏰ Starting monitoring loop (every 2 minutes)...');
-    setInterval(async () => {
-        try {
-            const currentlyLive = await checkLiveStatus();
+            req.on('error', reject);
+            req.setTimeout(30000, () => {
+                req.destroy();
+                reject(new Error('Request timeout'));
+            });
             
-            // Status changed to live
-            if (currentlyLive && !isLiveNow) {
-                isLiveNow = true;
-                console.log('🔴 STATUS CHANGE: User went LIVE!');
-                await sendDiscordMessage(`🔴 @${TARGET_USERNAME} is now LIVE on Instagram! 🎥\n\n🔗 https://www.instagram.com/${TARGET_USERNAME}/\n\n⏰ 檢測時間: ${new Date().toLocaleString('zh-TW')}`);
+            if (data) {
+                req.write(data);
             }
-            // Status changed to offline
-            else if (!currentlyLive && isLiveNow) {
-                isLiveNow = false;
-                console.log('⚫ STATUS CHANGE: User went offline');
-                await sendDiscordMessage(`⚫ @${TARGET_USERNAME} has ended their Instagram Live stream.\n\n⏰ 結束時間: ${new Date().toLocaleString('zh-TW')}`);
-            }
-            // No change
-            else {
-                console.log(`📊 Status unchanged: ${currentlyLive ? '🔴 LIVE' : '⚫ Offline'}`);
+            
+            req.end();
+        });
+    }
+    
+    async getUserInfo(username) {
+        try {
+            console.log(`🔍 Fetching user info for @${username}...`);
+            
+            const response = await this.makeRequest(`users/${username}/usernameinfo/`);
+            
+            if (response.statusCode === 200 && response.data.user) {
+                const user = response.data.user;
+                console.log(`✅ User found: ${user.username}`);
+                console.log(`📊 User data keys: ${Object.keys(user).join(', ')}`);
+                
+                // Check for live status indicators
+                const liveIndicators = [
+                    'is_live',
+                    'live_broadcast_id',
+                    'broadcast_id',
+                    'is_live_streaming',
+                    'live_subscription_status'
+                ];
+                
+                for (const indicator of liveIndicators) {
+                    if (user[indicator] !== undefined) {
+                        console.log(`📊 ${indicator}: ${user[indicator]}`);
+                        if (user[indicator] === true || user[indicator] !== null) {
+                            console.log('🔴 LIVE DETECTED via mobile API!');
+                            return true;
+                        }
+                    }
+                }
+                
+                // Check timeline media for live broadcasts
+                if (user.timeline_media && user.timeline_media.edges) {
+                    for (const edge of user.timeline_media.edges) {
+                        if (edge.node && edge.node.media_type === 4) { // Live video
+                            console.log('🔴 LIVE DETECTED in timeline media!');
+                            return true;
+                        }
+                    }
+                }
+                
+                console.log('⚫ No live indicators found in mobile API');
+                return false;
+                
+            } else {
+                console.log(`❌ Failed to get user info: ${response.statusCode}`);
+                return false;
             }
             
         } catch (error) {
-            console.error('❌ Error in monitoring loop:', error);
+            console.error('❌ Error getting user info:', error);
+            return false;
         }
-    }, 2 * 60 * 1000); // Check every 2 minutes
+    }
     
-    // Heartbeat every 10 minutes
-    setInterval(() => {
-        console.log(`💓 Puppeteer monitoring active - @${TARGET_USERNAME} | ${isLiveNow ? '🔴 LIVE' : '⚫ Offline'} | ${new Date().toLocaleString('zh-TW')}`);
-    }, 10 * 60 * 1000);
+    async checkReels(username) {
+        try {
+            console.log(`🎬 Checking reels for @${username}...`);
+            
+            const response = await this.makeRequest(`clips/user/`);
+            
+            if (response.statusCode === 200 && response.data.items) {
+                for (const item of response.data.items) {
+                    if (item.media_type === 4 && item.video_versions) { // Live content
+                        console.log('🔴 LIVE DETECTED in reels!');
+                        return true;
+                    }
+                }
+            }
+            
+            return false;
+            
+        } catch (error) {
+            console.error('❌ Error checking reels:', error);
+            return false;
+        }
+    }
 }
 
-// Handle process termination
-process.on('SIGINT', async () => {
-    console.log('Shutting down...');
-    await closeBrowser();
-    await client.destroy();
-    process.exit(0);
-});
+// Usage example
+const igAPI = new InstagramMobileAPI();
 
-process.on('SIGTERM', async () => {
-    console.log('Shutting down...');
-    await closeBrowser();
-    await client.destroy();
-    process.exit(0);
-});
+async function checkLiveStatusMobileAPI(username) {
+    try {
+        console.log(`\n🔍 === Checking @${username} live status (Mobile API) ===`);
+        
+        // Method 1: Check user info
+        const userInfoLive = await igAPI.getUserInfo(username);
+        if (userInfoLive) return true;
+        
+        // Method 2: Check reels/clips
+        const reelsLive = await igAPI.checkReels(username);
+        if (reelsLive) return true;
+        
+        console.log('⚫ Not live (Mobile API)');
+        return false;
+        
+    } catch (error) {
+        console.error('❌ Error in mobile API check:', error);
+        return false;
+    }
+}
 
-// Handle uncaught errors
-process.on('uncaughtException', async (error) => {
-    console.error('Uncaught Exception:', error);
-    await closeBrowser();
-    process.exit(1);
-});
-
-process.on('unhandledRejection', async (reason, promise) => {
-    console.error('Unhandled Rejection at:', promise, 'reason:', reason);
-    await closeBrowser();
-    process.exit(1);
-});
-
-// Start the bot
-client.login(DISCORD_TOKEN);
+module.exports = { InstagramMobileAPI, checkLiveStatusMobileAPI };
