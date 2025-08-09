@@ -1,321 +1,250 @@
-const { Client, GatewayIntentBits } = require('discord.js');
-const https = require('https');
-const fs = require('fs');
-const path = require('path');
+// Enhanced detection logic to add to your main.js
 
-// Environment variables
-const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
-const DISCORD_CHANNEL_ID = process.env.DISCORD_CHANNEL_ID;
-const TARGET_USERNAME = process.env.TARGET_USERNAME;
-
-const client = new Client({ 
-    intents: [
-        GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent
-    ]
-});
-
-let isLiveNow = false;
-
-client.once('ready', () => {
-    console.log(`Logged in as ${client.user.tag}!`);
-    startDebugMonitoring();
-});
-
-async function sendDiscordMessage(message) {
-    try {
-        const channel = await client.channels.fetch(DISCORD_CHANNEL_ID);
-        await channel.send(message);
-        console.log('Discord message sent:', message);
-    } catch (error) {
-        console.error('Failed to send Discord message:', error);
-    }
-}
-
-// 多種 User-Agent 輪換使用
-const userAgents = [
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15'
-];
-
-function getRandomUserAgent() {
-    return userAgents[Math.floor(Math.random() * userAgents.length)];
-}
-
-function makeRequest(url, options = {}) {
-    return new Promise((resolve, reject) => {
-        const req = https.request(url, options, (res) => {
-            let data = [];
-            
-            res.on('data', (chunk) => data.push(chunk));
-            res.on('end', () => {
-                const buffer = Buffer.concat(data);
-                resolve({ 
-                    statusCode: res.statusCode, 
-                    headers: res.headers, 
-                    data: buffer.toString('utf8'),
-                    buffer: buffer
-                });
-            });
-        });
-        
-        req.on('error', reject);
-        req.setTimeout(30000, () => {
-            req.destroy();
-            reject(new Error('Request timeout'));
-        });
-        req.end();
-    });
-}
-
-// 保存 HTML 到文件進行分析
-async function saveHTMLForAnalysis(html, filename) {
-    try {
-        const filepath = path.join(__dirname, `debug_${filename}_${Date.now()}.html`);
-        fs.writeFileSync(filepath, html, 'utf8');
-        console.log(`📁 HTML saved to: ${filepath}`);
-        return filepath;
-    } catch (error) {
-        console.error('❌ Failed to save HTML:', error);
-        return null;
-    }
-}
-
-// 更詳細的 HTML 分析
-function analyzeHTMLContent(html, source) {
-    console.log(`\n🔍 === Analyzing HTML from ${source} ===`);
-    console.log(`📊 HTML length: ${html.length} chars`);
+function checkHTMLForLiveStatus(html) {
+    console.log('\n🔍 === Enhanced Live Detection Analysis ===');
     
-    // 檢查是否包含 React/Vue 等框架標識
-    const frameworkIndicators = [
-        { name: 'React', pattern: /react|__REACT/i },
-        { name: 'Vue', pattern: /vue|__VUE/i },
-        { name: 'Instagram JS', pattern: /_sharedData|InstagramWebDesktopFBWWW/i },
-        { name: 'GraphQL', pattern: /graphql|query_hash/i }
-    ];
-    
-    frameworkIndicators.forEach(indicator => {
-        if (indicator.pattern.test(html)) {
-            console.log(`✅ Found ${indicator.name} indicators`);
-        }
-    });
-    
-    // 尋找直播相關的關鍵詞
+    // Method 1: 更廣泛的直播關鍵詞檢測
     const liveKeywords = [
-        '直播', 'LIVE', 'Live', 'live', 'broadcast', 'streaming',
-        'En vivo', 'En directo', 'Live now', '正在直播'
+        // 中文
+        '直播', '正在直播', '現在直播', '直播中',
+        // 英文
+        'LIVE', 'Live', 'live', 'Live now', 'Going live', 'Now live',
+        // 其他語言
+        'En vivo', 'En directo', 'Live stream', 'Broadcasting',
+        // Instagram 特定
+        'instagram live', 'ig live', 'live video'
     ];
     
-    console.log('\n📝 Live keyword analysis:');
+    console.log('📝 Keyword detection:');
+    let foundKeywords = [];
+    
     liveKeywords.forEach(keyword => {
-        const matches = (html.match(new RegExp(keyword, 'gi')) || []).length;
-        if (matches > 0) {
-            console.log(`   "${keyword}": ${matches} occurrences`);
+        const regex = new RegExp(keyword, 'gi');
+        const matches = html.match(regex);
+        if (matches) {
+            foundKeywords.push({ keyword, count: matches.length });
+            console.log(`   ✅ "${keyword}": ${matches.length} matches`);
             
-            // 找出包含關鍵詞的上下文
-            const contextRegex = new RegExp(`.{0,50}${keyword}.{0,50}`, 'gi');
+            // 顯示上下文
+            const contextRegex = new RegExp(`.{0,100}${keyword}.{0,100}`, 'gi');
             const contexts = html.match(contextRegex) || [];
-            contexts.slice(0, 3).forEach((context, idx) => {
-                console.log(`     Context ${idx + 1}: ...${context.trim()}...`);
+            contexts.slice(0, 2).forEach((context, idx) => {
+                console.log(`      Context ${idx + 1}: ...${context.trim()}...`);
             });
         }
     });
     
-    // 檢查 JSON 數據
-    console.log('\n📦 JSON data analysis:');
-    const jsonPatterns = [
-        { name: 'window._sharedData', pattern: /window\._sharedData\s*=\s*({.*?});/s },
-        { name: 'window.__additionalDataLoaded', pattern: /window\.__additionalDataLoaded\s*\(\s*'[^']+'\s*,\s*({.*?})\s*\)/s },
-        { name: 'Instagram config', pattern: /"config"\s*:\s*({.*?})/s }
+    // Method 2: 檢查特定的 HTML 結構
+    console.log('\n🏗️ HTML structure analysis:');
+    
+    // 檢查是否有直播相關的 CSS classes
+    const liveClassPatterns = [
+        /class="[^"]*live[^"]*"/gi,
+        /class="[^"]*broadcast[^"]*"/gi,
+        /class="[^"]*streaming[^"]*"/gi
     ];
     
-    jsonPatterns.forEach(jsonPattern => {
-        const match = html.match(jsonPattern.pattern);
+    liveClassPatterns.forEach(pattern => {
+        const matches = html.match(pattern);
+        if (matches) {
+            console.log(`   ✅ Found live-related classes: ${matches.length} matches`);
+            matches.slice(0, 3).forEach(match => {
+                console.log(`      ${match}`);
+            });
+        }
+    });
+    
+    // Method 3: 檢查 data attributes
+    const dataAttributes = [
+        /data-[^=]*live[^=]*="[^"]*"/gi,
+        /data-[^=]*broadcast[^=]*="[^"]*"/gi,
+        /aria-label="[^"]*live[^"]*"/gi,
+        /aria-label="[^"]*直播[^"]*"/gi
+    ];
+    
+    console.log('\n📊 Data attributes analysis:');
+    dataAttributes.forEach(pattern => {
+        const matches = html.match(pattern);
+        if (matches) {
+            console.log(`   ✅ Found live data attributes: ${matches.length} matches`);
+            matches.slice(0, 3).forEach(match => {
+                console.log(`      ${match}`);
+            });
+        }
+    });
+    
+    // Method 4: 檢查 JSON 數據中的直播狀態
+    console.log('\n📦 JSON data deep analysis:');
+    
+    // 尋找所有 JSON 數據
+    const jsonPatterns = [
+        /window\._sharedData\s*=\s*({.*?});/s,
+        /window\.__additionalDataLoaded\([^,]+,\s*({.*?})\)/s,
+        /"props"\s*:\s*({.*?})/s,
+        /"user"\s*:\s*({.*?})/s
+    ];
+    
+    jsonPatterns.forEach((pattern, idx) => {
+        const match = html.match(pattern);
         if (match) {
-            console.log(`✅ Found ${jsonPattern.name}`);
             try {
                 const jsonData = JSON.parse(match[1]);
-                console.log(`   Keys: ${Object.keys(jsonData).join(', ')}`);
+                console.log(`   ✅ Found JSON data block ${idx + 1}`);
                 
-                // 特別檢查可能包含直播信息的字段
-                const liveFields = ['is_live', 'broadcast', 'live_broadcast_id', 'edge_owner_to_timeline_media'];
-                liveFields.forEach(field => {
-                    if (hasNestedProperty(jsonData, field)) {
-                        console.log(`   🔴 Found potential live field: ${field}`);
-                    }
-                });
+                // 遞迴搜尋所有可能的直播字段
+                const liveFields = findLiveFields(jsonData);
+                if (liveFields.length > 0) {
+                    console.log(`      🔴 Found potential live fields:`);
+                    liveFields.forEach(field => {
+                        console.log(`         ${field.path}: ${field.value}`);
+                    });
+                    return true;
+                }
+                
             } catch (e) {
-                console.log(`   ❌ Failed to parse JSON: ${e.message}`);
+                console.log(`   ❌ Failed to parse JSON block ${idx + 1}: ${e.message}`);
             }
         }
     });
     
-    // 檢查 meta tags 和其他結構化數據
+    // Method 5: 檢查 URL 模式
+    console.log('\n🔗 URL pattern analysis:');
+    const urlPatterns = [
+        /https?:\/\/[^"'\s]*live[^"'\s]*/gi,
+        /https?:\/\/[^"'\s]*broadcast[^"'\s]*/gi,
+        /\/live\//gi,
+        /\/broadcast\//gi
+    ];
+    
+    urlPatterns.forEach(pattern => {
+        const matches = html.match(pattern);
+        if (matches) {
+            console.log(`   ✅ Found live URLs: ${matches.length} matches`);
+            matches.slice(0, 3).forEach(match => {
+                console.log(`      ${match}`);
+            });
+        }
+    });
+    
+    // Method 6: 檢查 meta tags
     console.log('\n🏷️ Meta tags analysis:');
     const metaPatterns = [
-        /<meta[^>]+property="og:type"[^>]+content="([^"]+)"/gi,
-        /<meta[^>]+property="og:title"[^>]+content="([^"]+)"/gi,
-        /<meta[^>]+name="description"[^>]+content="([^"]+)"/gi
+        /<meta[^>]+property="og:type"[^>]+content="video[^"]*"/gi,
+        /<meta[^>]+property="og:video[^>]+/gi,
+        /<meta[^>]+content="[^"]*live[^"]*"/gi,
+        /<meta[^>]+content="[^"]*直播[^"]*"/gi
     ];
     
     metaPatterns.forEach(pattern => {
-        const matches = [...html.matchAll(pattern)];
-        matches.forEach(match => {
-            console.log(`   Meta: ${match[1]}`);
-        });
-    });
-}
-
-// 輔助函數：檢查嵌套屬性
-function hasNestedProperty(obj, prop) {
-    return JSON.stringify(obj).includes(`"${prop}"`);
-}
-
-// 多方法對比檢測
-async function checkLiveStatusWithComparison() {
-    const timestamp = new Date().toISOString();
-    console.log(`\n🔍 === Multi-method Live Status Check (${timestamp}) ===`);
-    
-    const results = {};
-    
-    // 方法 1: 基本 GET 請求
-    try {
-        console.log('\n🌐 Method 1: Basic GET request');
-        const basicResponse = await makeRequest(`https://www.instagram.com/${TARGET_USERNAME}/`, {
-            method: 'GET',
-            headers: {
-                'User-Agent': getRandomUserAgent(),
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.5',
-                'Accept-Encoding': 'gzip, deflate',
-                'Connection': 'keep-alive',
-                'Upgrade-Insecure-Requests': '1'
-            }
-        });
-        
-        const basicFile = await saveHTMLForAnalysis(basicResponse.data, 'basic_get');
-        analyzeHTMLContent(basicResponse.data, 'Basic GET');
-        results.basic = checkHTMLForLiveStatus(basicResponse.data);
-        
-    } catch (error) {
-        console.error('❌ Basic GET failed:', error);
-        results.basic = false;
-    }
-    
-    // 方法 2: 模擬瀏覽器請求（包含更多 headers）
-    try {
-        console.log('\n🌐 Method 2: Browser-like request');
-        const browserResponse = await makeRequest(`https://www.instagram.com/${TARGET_USERNAME}/`, {
-            method: 'GET',
-            headers: {
-                'User-Agent': getRandomUserAgent(),
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
-                'Accept-Language': 'en-US,en;q=0.9,zh-TW;q=0.8,zh;q=0.7',
-                'Accept-Encoding': 'gzip, deflate, br',
-                'Sec-Fetch-Dest': 'document',
-                'Sec-Fetch-Mode': 'navigate',
-                'Sec-Fetch-Site': 'none',
-                'Sec-Fetch-User': '?1',
-                'Cache-Control': 'max-age=0',
-                'Upgrade-Insecure-Requests': '1',
-                'Connection': 'keep-alive'
-            }
-        });
-        
-        const browserFile = await saveHTMLForAnalysis(browserResponse.data, 'browser_like');
-        analyzeHTMLContent(browserResponse.data, 'Browser-like');
-        results.browser = checkHTMLForLiveStatus(browserResponse.data);
-        
-    } catch (error) {
-        console.error('❌ Browser-like request failed:', error);
-        results.browser = false;
-    }
-    
-    // 方法 3: 嘗試 GraphQL API
-    try {
-        console.log('\n🌐 Method 3: GraphQL API attempt');
-        // 這需要更複雜的實現，先作為占位符
-        results.graphql = false;
-    } catch (error) {
-        console.error('❌ GraphQL request failed:', error);
-        results.graphql = false;
-    }
-    
-    // 比較結果
-    console.log('\n📊 === Results Comparison ===');
-    Object.entries(results).forEach(([method, isLive]) => {
-        console.log(`   ${method}: ${isLive ? '🔴 LIVE' : '⚫ Offline'}`);
-    });
-    
-    // 如果結果不一致，發送警告
-    const uniqueResults = [...new Set(Object.values(results))];
-    if (uniqueResults.length > 1) {
-        console.log('⚠️ WARNING: Inconsistent results detected!');
-        await sendDiscordMessage(`⚠️ Inconsistent live detection results for @${TARGET_USERNAME}:\n${Object.entries(results).map(([k,v]) => `${k}: ${v ? 'LIVE' : 'Offline'}`).join('\n')}`);
-    }
-    
-    // 返回最可能正確的結果（可以根據經驗調整邏輯）
-    return results.browser || results.basic || results.graphql;
-}
-
-function checkHTMLForLiveStatus(html) {
-    // 你原本的 HTML 檢測邏輯，但加上更多調試信息
-    const liveTexts = ['直播', 'LIVE', 'En vivo', 'Live'];
-    
-    for (const liveText of liveTexts) {
-        const regex = new RegExp(`<span[^>]*>${liveText}</span>`, 'gi');
-        const matches = html.match(regex);
-        
+        const matches = html.match(pattern);
         if (matches) {
-            console.log(`🔴 LIVE DETECTED: Found ${liveText} in span tag`);
-            console.log(`   Matches: ${matches.length}`);
-            return true;
+            console.log(`   ✅ Found relevant meta tags: ${matches.length} matches`);
+            matches.forEach(match => {
+                console.log(`      ${match}`);
+            });
         }
+    });
+    
+    // 決定是否在直播
+    const hasLiveKeywords = foundKeywords.length > 0;
+    const result = hasLiveKeywords; // 可以根據需要調整邏輯
+    
+    console.log(`\n📊 Final decision: ${result ? '🔴 LIVE DETECTED' : '⚫ No live indicators found'}`);
+    if (foundKeywords.length > 0) {
+        console.log(`   Based on keywords: ${foundKeywords.map(k => k.keyword).join(', ')}`);
+    }
+    
+    return result;
+}
+
+// 遞迴搜尋 JSON 中的直播相關字段
+function findLiveFields(obj, path = '', maxDepth = 5, currentDepth = 0) {
+    if (currentDepth > maxDepth || !obj || typeof obj !== 'object') {
+        return [];
+    }
+    
+    const liveFields = [];
+    const liveKeywords = [
+        'is_live', 'isLive', 'live', 'broadcast', 'streaming',
+        'live_broadcast_id', 'broadcast_id', 'live_status',
+        'live_stream', 'is_broadcasting', 'broadcast_status'
+    ];
+    
+    for (const [key, value] of Object.entries(obj)) {
+        const currentPath = path ? `${path}.${key}` : key;
+        
+        // 檢查 key 是否包含直播相關詞彙
+        if (liveKeywords.some(keyword => key.toLowerCase().includes(keyword.toLowerCase()))) {
+            liveFields.push({ path: currentPath, value: value });
+        }
+        
+        // 遞迴檢查嵌套對象
+        if (typeof value === 'object' && value !== null) {
+            liveFields.push(...findLiveFields(value, currentPath, maxDepth, currentDepth + 1));
+        }
+    }
+    
+    return liveFields;
+}
+
+// 新增：檢查特定 Instagram API endpoint
+async function checkInstagramAPI(username) {
+    console.log('\n🌐 === Trying Instagram API endpoints ===');
+    
+    const endpoints = [
+        `https://www.instagram.com/api/v1/users/web_profile_info/?username=${username}`,
+        `https://i.instagram.com/api/v1/users/${username}/info/`,
+        `https://www.instagram.com/${username}/?__a=1`,
+        `https://www.instagram.com/graphql/query/` // 需要 query_hash
+    ];
+    
+    for (const endpoint of endpoints) {
+        try {
+            console.log(`🔍 Trying: ${endpoint}`);
+            
+            const response = await makeRequest(endpoint, {
+                method: 'GET',
+                headers: {
+                    'User-Agent': getRandomUserAgent(),
+                    'Accept': 'application/json, text/plain, */*',
+                    'Accept-Language': 'en-US,en;q=0.9',
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'Referer': `https://www.instagram.com/${username}/`
+                }
+            });
+            
+            if (response.statusCode === 200) {
+                console.log(`   ✅ Success! Response length: ${response.data.length}`);
+                
+                try {
+                    const jsonData = JSON.parse(response.data);
+                    const liveFields = findLiveFields(jsonData);
+                    
+                    if (liveFields.length > 0) {
+                        console.log(`   🔴 Found live fields in API:`);
+                        liveFields.forEach(field => {
+                            console.log(`      ${field.path}: ${field.value}`);
+                        });
+                        return true;
+                    }
+                } catch (e) {
+                    console.log(`   ❌ Failed to parse API response: ${e.message}`);
+                }
+            } else {
+                console.log(`   ❌ Failed: ${response.statusCode}`);
+            }
+            
+        } catch (error) {
+            console.log(`   ❌ Error: ${error.message}`);
+        }
+        
+        // 避免太快的請求
+        await new Promise(resolve => setTimeout(resolve, 1000));
     }
     
     return false;
 }
 
-async function startDebugMonitoring() {
-    console.log(`🚀 Starting Instagram Live DEBUG monitoring for @${TARGET_USERNAME}`);
-    
-    await sendDiscordMessage(`🔍 Instagram Live Monitor started (DEBUG MODE) for @${TARGET_USERNAME}\n\n📋 Will save HTML files for analysis`);
-    
-    // 立即執行一次詳細檢查
-    console.log('🔎 Performing initial detailed analysis...');
-    const initialStatus = await checkLiveStatusWithComparison();
-    isLiveNow = initialStatus;
-    
-    // 每 5 分鐘執行一次（調試時可以更頻繁）
-    setInterval(async () => {
-        try {
-            const currentlyLive = await checkLiveStatusWithComparison();
-            
-            if (currentlyLive && !isLiveNow) {
-                isLiveNow = true;
-                console.log('🔴 STATUS CHANGE: User went LIVE!');
-                await sendDiscordMessage(`🔴 @${TARGET_USERNAME} is now LIVE on Instagram! 🎥\n\nhttps://www.instagram.com/${TARGET_USERNAME}/`);
-            } else if (!currentlyLive && isLiveNow) {
-                isLiveNow = false;
-                console.log('⚫ STATUS CHANGE: User went offline');
-                await sendDiscordMessage(`⚫ @${TARGET_USERNAME} has ended their Instagram Live stream.`);
-            }
-            
-        } catch (error) {
-            console.error('❌ Error in debug monitoring loop:', error);
-        }
-    }, 5 * 60 * 1000); // 5 minutes
-}
-
-// Handle process termination
-process.on('SIGINT', async () => {
-    console.log('Shutting down...');
-    await client.destroy();
-    process.exit(0);
-});
-
-// Start the bot
-client.login(DISCORD_TOKEN);
+// 使用方法：在你的 checkLiveStatusWithComparison 函數中加入：
+// const apiResult = await checkInstagramAPI(TARGET_USERNAME);
+// results.api = apiResult;
