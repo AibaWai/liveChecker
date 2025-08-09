@@ -51,167 +51,242 @@ function makeRequest(url, options = {}) {
 async function sendDiscordMessage(message) {
     try {
         const channel = await client.channels.fetch(DISCORD_CHANNEL_ID);
+        // 確保消息不超過 Discord 限制
+        if (message.length > 1900) {
+            message = message.substring(0, 1900) + '...(truncated)';
+        }
         await channel.send(message);
     } catch (error) {
         console.error('Failed to send Discord message:', error);
     }
 }
 
-// 深度分析 HTML 中的直播指標
-function analyzeLiveContent(html) {
-    console.log('\n🔍 === Deep Live Analysis ===');
+// 精確的直播檢測邏輯
+function detectPreciseLiveStatus(html) {
+    console.log('\n🎯 === Precise Live Detection ===');
     
     const results = {
-        totalKeywords: 0,
         liveIndicators: [],
-        suspiciousPatterns: [],
-        jsonData: [],
-        recommendations: []
+        falsePositives: [],
+        jsonBlocks: [],
+        finalDecision: false,
+        confidence: 'NONE'
     };
     
-    // 1. 分析所有直播關鍵詞的上下文
-    console.log('\n📝 Analyzing live keyword contexts...');
-    const liveKeywords = ['直播', 'LIVE', 'Live', 'live', 'broadcast', 'streaming'];
+    // 1. 過濾掉已知的假陽性模式（靜態 UI 元素）
+    console.log('🚫 Filtering out false positives...');
+    const falsePositivePatterns = [
+        /data-sjs>/g,                           // 靜態 JavaScript 載入器
+        /--ig-live-badge:/g,                    // CSS 變量定義
+        /--live-video-border-radius:/g,         // CSS 變量定義
+        /"type":"js"/g,                         // 資源載入配置
+        /"type":"css"/g,                        // 資源載入配置
+        /is_latency_sensitive_broadcast/g,      // 通用配置
+        /streaming_implementation/g,            // 通用配置
+        /hive_streaming_video/g                 // 通用配置
+    ];
     
-    liveKeywords.forEach(keyword => {
-        const regex = new RegExp(`.{0,50}${keyword}.{0,50}`, 'gi');
-        const contexts = html.match(regex) || [];
-        
-        if (contexts.length > 0) {
-            console.log(`\n🔤 Keyword "${keyword}" found ${contexts.length} times:`);
-            results.totalKeywords += contexts.length;
-            
-            contexts.slice(0, 5).forEach((context, idx) => {
-                console.log(`   ${idx + 1}. ...${context.trim()}...`);
-                
-                // 檢查是否為真正的直播指標
-                if (isLiveIndicator(context, keyword)) {
-                    results.liveIndicators.push({
-                        keyword: keyword,
-                        context: context.trim(),
-                        confidence: getLiveConfidence(context, keyword)
-                    });
-                }
+    falsePositivePatterns.forEach((pattern, idx) => {
+        const matches = html.match(pattern) || [];
+        if (matches.length > 0) {
+            results.falsePositives.push({
+                pattern: `FP${idx + 1}`,
+                count: matches.length,
+                description: 'Static UI element'
+            });
+            console.log(`   🚫 False positive ${idx + 1}: ${matches.length} matches (filtered out)`);
+        }
+    });
+    
+    // 2. 尋找真正的直播指標
+    console.log('\n🔍 Looking for genuine live indicators...');
+    
+    // 真正的直播狀態指標
+    const genuineLivePatterns = [
+        {
+            name: 'Live Badge Text',
+            pattern: /<[^>]*>[\s]*(?:直播|LIVE|Live now|正在直播)[\s]*<\/[^>]*>/gi,
+            confidence: 'HIGH'
+        },
+        {
+            name: 'Live Broadcast ID',
+            pattern: /"live_broadcast_id"\s*:\s*"[a-zA-Z0-9_-]+"/gi,
+            confidence: 'VERY_HIGH'
+        },
+        {
+            name: 'Is Live True',
+            pattern: /"is_live"\s*:\s*true/gi,
+            confidence: 'VERY_HIGH'
+        },
+        {
+            name: 'Broadcast Status Active',
+            pattern: /"broadcast_status"\s*:\s*"active"/gi,
+            confidence: 'VERY_HIGH'
+        },
+        {
+            name: 'Live Stream URL',
+            pattern: /"dash_manifest"\s*:\s*"[^"]*live[^"]*"/gi,
+            confidence: 'HIGH'
+        },
+        {
+            name: 'Live Viewer Count',
+            pattern: /"viewer_count"\s*:\s*[0-9]+/gi,
+            confidence: 'MEDIUM'
+        },
+        {
+            name: 'Live Media Type',
+            pattern: /"media_type"\s*:\s*4/gi,
+            confidence: 'HIGH'
+        }
+    ];
+    
+    genuineLivePatterns.forEach(pattern => {
+        const matches = html.match(pattern.pattern) || [];
+        if (matches.length > 0) {
+            results.liveIndicators.push({
+                name: pattern.name,
+                count: matches.length,
+                confidence: pattern.confidence,
+                examples: matches.slice(0, 2)
+            });
+            console.log(`   ✅ ${pattern.name}: ${matches.length} matches (${pattern.confidence})`);
+            matches.slice(0, 2).forEach((match, idx) => {
+                console.log(`      ${idx + 1}. ${match}`);
             });
         }
     });
     
-    // 2. 尋找 JSON 數據塊
-    console.log('\n📦 Looking for JSON data blocks...');
+    // 3. 尋找和解析 JSON 數據中的用戶狀態
+    console.log('\n📦 Looking for user status in JSON...');
+    
+    // 尋找包含用戶數據的 JSON 塊
     const jsonPatterns = [
+        /"user"\s*:\s*{[^{}]*"username"\s*:\s*"suteaka4649_"[^{}]*}/g,
         /window\._sharedData\s*=\s*({.*?});/s,
-        /"user"\s*:\s*({[^}]*"username"[^}]*})/g,
-        /"live[^"]*"\s*:\s*([^,}\]]+)/gi,
-        /"broadcast[^"]*"\s*:\s*([^,}\]]+)/gi
+        /"ProfilePage"\s*:\s*\[({.*?})\]/s
     ];
     
     jsonPatterns.forEach((pattern, idx) => {
         const matches = html.match(pattern);
         if (matches) {
-            console.log(`✅ Found JSON pattern ${idx + 1}: ${matches.length} matches`);
-            matches.slice(0, 3).forEach(match => {
-                results.jsonData.push({
-                    pattern: idx + 1,
-                    content: match.substring(0, 200) + '...'
-                });
+            console.log(`   📦 Found JSON pattern ${idx + 1}: ${matches.length} matches`);
+            
+            matches.forEach((match, matchIdx) => {
+                try {
+                    // 嘗試從匹配中提取 JSON
+                    let jsonStr = match;
+                    if (match.includes('window._sharedData')) {
+                        jsonStr = match.split('=')[1].replace(/;$/, '');
+                    }
+                    
+                    const jsonData = JSON.parse(jsonStr);
+                    const userStatus = extractUserLiveStatus(jsonData);
+                    
+                    if (userStatus.found) {
+                        results.jsonBlocks.push({
+                            pattern: idx + 1,
+                            match: matchIdx + 1,
+                            status: userStatus
+                        });
+                        console.log(`      ✅ User status found: ${JSON.stringify(userStatus)}`);
+                    }
+                    
+                } catch (e) {
+                    console.log(`      ❌ Failed to parse JSON block: ${e.message}`);
+                }
             });
         }
     });
     
-    // 3. 檢查特殊的直播相關模式
-    console.log('\n🎯 Checking live-specific patterns...');
-    const livePatterns = [
-        /"is_live"\s*:\s*true/i,
-        /"live_broadcast_id"\s*:\s*"[^"]+"/i,
-        /class="[^"]*live[^"]*"/gi,
-        /aria-label="[^"]*live[^"]*"/gi,
-        /data-[^=]*live[^=]*="/gi,
-        /"__typename"\s*:\s*"[^"]*Live[^"]*"/gi
-    ];
+    // 4. 計算最終決定和置信度
+    console.log('\n🎯 Calculating final decision...');
     
-    livePatterns.forEach((pattern, idx) => {
-        const matches = html.match(pattern);
-        if (matches) {
-            console.log(`🔴 Live pattern ${idx + 1}: ${matches.length} matches`);
-            matches.slice(0, 3).forEach(match => {
-                results.suspiciousPatterns.push({
-                    pattern: idx + 1,
-                    match: match,
-                    confidence: 'HIGH'
-                });
-            });
-        }
-    });
+    const veryHighIndicators = results.liveIndicators.filter(i => i.confidence === 'VERY_HIGH');
+    const highIndicators = results.liveIndicators.filter(i => i.confidence === 'HIGH');
+    const mediumIndicators = results.liveIndicators.filter(i => i.confidence === 'MEDIUM');
+    const jsonPositives = results.jsonBlocks.filter(j => j.status.isLive);
     
-    // 4. 分析頁面結構
-    console.log('\n🏗️ Analyzing page structure...');
-    const structureChecks = [
-        { name: 'Meta tags', pattern: /<meta[^>]+live[^>]*>/gi },
-        { name: 'CSS classes', pattern: /class="[^"]*live[^"]*"/gi },
-        { name: 'Data attributes', pattern: /data-[^=]*live[^=]*="/gi },
-        { name: 'Script variables', pattern: /var\s+[^=]*live[^=]*=/gi }
-    ];
-    
-    structureChecks.forEach(check => {
-        const matches = html.match(check.pattern);
-        if (matches) {
-            console.log(`   ${check.name}: ${matches.length} matches`);
-        }
-    });
-    
-    // 5. 生成建議
-    console.log('\n💡 Generating recommendations...');
-    
-    if (results.suspiciousPatterns.length > 0) {
-        results.recommendations.push('🔴 Found HIGH confidence live patterns - likely live streaming!');
-    }
-    
-    if (results.liveIndicators.length > 0) {
-        const highConfidence = results.liveIndicators.filter(i => i.confidence === 'HIGH');
-        if (highConfidence.length > 0) {
-            results.recommendations.push(`🟡 Found ${highConfidence.length} high-confidence live indicators`);
-        }
-    }
-    
-    if (results.totalKeywords > 300) {
-        results.recommendations.push('⚠️ Very high keyword count - may include UI elements');
-    }
-    
-    if (results.jsonData.length > 0) {
-        results.recommendations.push('📦 Found JSON data - should parse for live status');
+    if (veryHighIndicators.length > 0 || jsonPositives.length > 0) {
+        results.finalDecision = true;
+        results.confidence = 'VERY_HIGH';
+        console.log('   🔴 LIVE: Very high confidence indicators found');
+    } else if (highIndicators.length >= 2) {
+        results.finalDecision = true;
+        results.confidence = 'HIGH';
+        console.log('   🔴 LIVE: Multiple high confidence indicators found');
+    } else if (highIndicators.length === 1 && mediumIndicators.length >= 1) {
+        results.finalDecision = true;
+        results.confidence = 'MEDIUM';
+        console.log('   🟡 LIVE: Combined indicators suggest live status');
+    } else {
+        results.finalDecision = false;
+        results.confidence = 'NONE';
+        console.log('   ⚫ NOT LIVE: No convincing indicators found');
     }
     
     return results;
 }
 
-// 判斷是否為真正的直播指標
-function isLiveIndicator(context, keyword) {
-    const liveContexts = [
-        /is.*live/i,
-        /live.*stream/i,
-        /live.*broadcast/i,
-        /going.*live/i,
-        /now.*live/i,
-        /"live"\s*:\s*true/i,
-        /live_broadcast_id/i,
-        /broadcast_status/i
-    ];
+// 從 JSON 數據中提取用戶直播狀態
+function extractUserLiveStatus(jsonData) {
+    const result = {
+        found: false,
+        isLive: false,
+        details: {}
+    };
     
-    return liveContexts.some(pattern => pattern.test(context));
-}
-
-// 評估直播指標的置信度
-function getLiveConfidence(context, keyword) {
-    if (/"live"\s*:\s*true/i.test(context)) return 'HIGH';
-    if (/live_broadcast_id|broadcast_status/i.test(context)) return 'HIGH';
-    if (/is.*live|going.*live|now.*live/i.test(context)) return 'MEDIUM';
-    if (/class|aria|data/.test(context)) return 'LOW';
-    return 'UNKNOWN';
+    try {
+        // 方法 1: 直接在 user 對象中尋找
+        if (jsonData.user) {
+            result.found = true;
+            result.details.source = 'direct_user';
+            
+            if (jsonData.user.is_live === true) {
+                result.isLive = true;
+                result.details.indicator = 'is_live';
+            }
+            
+            if (jsonData.user.live_broadcast_id) {
+                result.isLive = true;
+                result.details.indicator = 'live_broadcast_id';
+                result.details.broadcastId = jsonData.user.live_broadcast_id;
+            }
+        }
+        
+        // 方法 2: 在 GraphQL 結構中尋找
+        if (jsonData.data?.user) {
+            result.found = true;
+            result.details.source = 'graphql_user';
+            
+            const user = jsonData.data.user;
+            if (user.is_live === true) {
+                result.isLive = true;
+                result.details.indicator = 'is_live';
+            }
+        }
+        
+        // 方法 3: 在 ProfilePage 中尋找
+        if (jsonData.entry_data?.ProfilePage?.[0]?.graphql?.user) {
+            result.found = true;
+            result.details.source = 'profile_page';
+            
+            const user = jsonData.entry_data.ProfilePage[0].graphql.user;
+            if (user.is_live === true) {
+                result.isLive = true;
+                result.details.indicator = 'is_live';
+            }
+        }
+        
+    } catch (error) {
+        console.log(`   ❌ Error extracting user status: ${error.message}`);
+    }
+    
+    return result;
 }
 
 // 主要檢測函數
 async function checkInstagramLive() {
-    console.log(`\n🔍 Checking @${TARGET_USERNAME} for live status...`);
+    console.log(`\n🔍 Precise Live Check for @${TARGET_USERNAME}...`);
     
     try {
         const response = await makeRequest(`https://www.instagram.com/${TARGET_USERNAME}/`, {
@@ -232,46 +307,40 @@ async function checkInstagramLive() {
         
         console.log(`✅ Got HTML content: ${response.data.length} characters`);
         
-        // 深度分析內容
-        const analysis = analyzeLiveContent(response.data);
+        // 使用精確檢測
+        const analysis = detectPreciseLiveStatus(response.data);
         
-        // 發送分析結果到 Discord
-        const summary = `📊 **Live Analysis Results:**
-🔤 Total keywords: ${analysis.totalKeywords}
-🔴 High-confidence patterns: ${analysis.suspiciousPatterns.length}
-🟡 Live indicators: ${analysis.liveIndicators.length}
-📦 JSON data blocks: ${analysis.jsonData.length}
-
-**Recommendations:**
-${analysis.recommendations.map(r => `• ${r}`).join('\n')}`;
+        // 創建簡潔的摘要
+        const summary = `🎯 **Precise Live Analysis:**
+📊 Genuine indicators: ${analysis.liveIndicators.length}
+🚫 False positives filtered: ${analysis.falsePositives.length}
+📦 JSON blocks with user data: ${analysis.jsonBlocks.length}
+🎯 **Decision: ${analysis.finalDecision ? '🔴 LIVE' : '⚫ NOT LIVE'}**
+📈 Confidence: ${analysis.confidence}`;
 
         await sendDiscordMessage(summary);
         
-        // 如果有高置信度的模式，顯示詳細信息
-        if (analysis.suspiciousPatterns.length > 0) {
-            const patterns = analysis.suspiciousPatterns.slice(0, 3).map((p, idx) => 
-                `${idx + 1}. ${p.match}`
-            ).join('\n');
-            
-            await sendDiscordMessage(`🔴 **High-Confidence Live Patterns:**\n\`\`\`\n${patterns}\n\`\`\``);
-        }
-        
-        // 如果有直播指標，顯示它們
+        // 如果找到真正的指標，顯示它們
         if (analysis.liveIndicators.length > 0) {
-            const indicators = analysis.liveIndicators.slice(0, 3).map((i, idx) => 
-                `${idx + 1}. [${i.confidence}] ${i.keyword}: ${i.context.substring(0, 100)}...`
+            const indicators = analysis.liveIndicators.map((ind, idx) => 
+                `${idx + 1}. ${ind.name}: ${ind.count} (${ind.confidence})`
             ).join('\n');
             
-            await sendDiscordMessage(`🟡 **Live Indicators:**\n\`\`\`\n${indicators}\n\`\`\``);
+            await sendDiscordMessage(`🔍 **Live Indicators Found:**\n\`\`\`\n${indicators}\n\`\`\``);
         }
         
-        // 決定是否在直播
-        const isLive = analysis.suspiciousPatterns.length > 0 || 
-                      analysis.liveIndicators.filter(i => i.confidence === 'HIGH').length > 0;
+        // 如果找到 JSON 數據，顯示用戶狀態
+        if (analysis.jsonBlocks.length > 0) {
+            const jsonInfo = analysis.jsonBlocks.map((block, idx) => 
+                `${idx + 1}. Pattern ${block.pattern}: Live=${block.status.isLive} (${block.status.details.source})`
+            ).join('\n');
+            
+            await sendDiscordMessage(`📦 **JSON User Status:**\n\`\`\`\n${jsonInfo}\n\`\`\``);
+        }
         
-        console.log(`🎯 Final decision: ${isLive ? 'LIVE' : 'NOT LIVE'}`);
+        console.log(`🎯 Final result: ${analysis.finalDecision ? 'LIVE' : 'NOT LIVE'} (${analysis.confidence})`);
         
-        return isLive;
+        return analysis.finalDecision;
         
     } catch (error) {
         console.error('❌ Error checking Instagram:', error);
@@ -287,30 +356,30 @@ client.on('messageCreate', async (message) => {
     const content = message.content.toLowerCase();
     
     if (content === '!check') {
-        await message.reply('🔍 Analyzing Instagram live content...');
+        await message.reply('🎯 Running precise live detection...');
         const isLive = await checkInstagramLive();
         const status = isLive ? '🔴 LIVE DETECTED' : '⚫ Not Live';
-        await message.reply(`📊 **Result:** ${status}`);
+        await message.reply(`📊 **Precise Result:** ${status}`);
     }
     
     if (content === '!status') {
         const status = isLiveNow ? '🔴 LIVE' : '⚫ Offline';
-        await message.reply(`📊 **Monitor Status**\nTarget: @${TARGET_USERNAME}\nCurrent: ${status}\n\n💡 Use \`!check\` to analyze live content`);
+        await message.reply(`📊 **Monitor Status**\nTarget: @${TARGET_USERNAME}\nCurrent: ${status}\n\n💡 Use \`!check\` for precise detection`);
     }
     
     if (content === '!monitor') {
-        await message.reply('🚀 Starting continuous monitoring...');
-        startMonitoring();
+        await message.reply('🚀 Starting precise monitoring...');
+        startPreciseMonitoring();
     }
     
     if (content === '!help') {
-        await message.reply(`🤖 **Instagram Live Analyzer**\n\n\`!check\` - Analyze current live status\n\`!monitor\` - Start continuous monitoring\n\`!status\` - Check current status\n\`!help\` - Show this help`);
+        await message.reply(`🎯 **Precise Instagram Live Detector**\n\n\`!check\` - Run precise live detection\n\`!monitor\` - Start continuous monitoring\n\`!status\` - Check current status\n\`!help\` - Show this help`);
     }
 });
 
-// 持續監控
-function startMonitoring() {
-    console.log('🚀 Starting continuous monitoring...');
+// 精確持續監控
+function startPreciseMonitoring() {
+    console.log('🚀 Starting precise continuous monitoring...');
     
     setInterval(async () => {
         try {
@@ -335,8 +404,8 @@ function startMonitoring() {
 }
 
 client.once('ready', () => {
-    console.log(`✅ Live analyzer ready as ${client.user.tag}!`);
-    sendDiscordMessage(`🔍 **Instagram Live Analyzer Ready**\nTarget: @${TARGET_USERNAME}\n\n💡 Use \`!check\` to analyze live content\n💡 Use \`!monitor\` to start continuous monitoring`);
+    console.log(`✅ Precise detector ready as ${client.user.tag}!`);
+    sendDiscordMessage(`🎯 **Precise Instagram Live Detector Ready**\nTarget: @${TARGET_USERNAME}\n\n💡 Use \`!check\` for precise live detection\n💡 Use \`!monitor\` to start continuous monitoring`);
 });
 
 client.login(DISCORD_TOKEN);
