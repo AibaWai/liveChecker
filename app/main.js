@@ -28,6 +28,308 @@ let sessionData = {
 };
 
 // Discord command handling
+
+// 在你的 main.js 中的 Discord command handling 部分添加這些命令
+
+client.on('messageCreate', async (message) => {
+    if (message.author.bot) return;
+    
+    const content = message.content.toLowerCase();
+    
+    // 原有命令...
+    
+    if (content === '!files') {
+        await listDebugFiles(message);
+    }
+    
+    if (content.startsWith('!export ')) {
+        const filename = content.replace('!export ', '').trim();
+        await exportFile(message, filename);
+    }
+    
+    if (content === '!latest') {
+        await exportLatestFiles(message);
+    }
+    
+    if (content === '!api') {
+        await exportLatestAPIResponse(message);
+    }
+    
+    if (content === '!compare') {
+        await compareLatestFiles(message);
+    }
+});
+
+// 列出所有調試文件
+async function listDebugFiles(message) {
+    try {
+        const debugDir = path.join(__dirname, 'debug-files');
+        if (!fs.existsSync(debugDir)) {
+            await message.reply('❌ No debug files directory found.');
+            return;
+        }
+        
+        const files = fs.readdirSync(debugDir)
+            .filter(file => file.endsWith('.html') || file.endsWith('.txt'))
+            .sort((a, b) => {
+                const aTime = fs.statSync(path.join(debugDir, a)).mtime;
+                const bTime = fs.statSync(path.join(debugDir, b)).mtime;
+                return bTime - aTime; // 最新的在前
+            });
+        
+        if (files.length === 0) {
+            await message.reply('❌ No debug files found.');
+            return;
+        }
+        
+        const fileList = files.slice(0, 10).map((file, idx) => {
+            const filepath = path.join(debugDir, file);
+            const stats = fs.statSync(filepath);
+            const size = (stats.size / 1024).toFixed(1);
+            const time = stats.mtime.toLocaleString('zh-TW');
+            return `${idx + 1}. \`${file}\` (${size}KB, ${time})`;
+        }).join('\n');
+        
+        await message.reply(`📁 **Debug Files (最新10個):**\n${fileList}\n\n💡 使用 \`!export filename\` 來導出文件\n💡 使用 \`!latest\` 導出最新文件\n💡 使用 \`!api\` 導出最新API回應`);
+        
+    } catch (error) {
+        await message.reply(`❌ Error listing files: ${error.message}`);
+    }
+}
+
+// 導出指定文件
+async function exportFile(message, filename) {
+    try {
+        const debugDir = path.join(__dirname, 'debug-files');
+        const filepath = path.join(debugDir, filename);
+        
+        if (!fs.existsSync(filepath)) {
+            await message.reply(`❌ File not found: ${filename}`);
+            return;
+        }
+        
+        const stats = fs.statSync(filepath);
+        const fileSizeKB = (stats.size / 1024).toFixed(1);
+        
+        if (stats.size > 1900000) { // Discord 消息限制約 2MB
+            await message.reply(`❌ File too large (${fileSizeKB}KB). Try using !analyze instead.`);
+            return;
+        }
+        
+        const content = fs.readFileSync(filepath, 'utf8');
+        
+        // 如果是 HTML 文件，創建一個簡化版本
+        if (filename.endsWith('.html')) {
+            const analysis = analyzeHTMLContent(content, filename);
+            
+            // 分段發送內容
+            const chunks = chunkString(content, 1900);
+            
+            await message.reply(`📁 **${filename}** (${fileSizeKB}KB)\n📊 **Quick Analysis:** ${analysis ? '🔴 LIVE indicators found' : '⚫ No live indicators'}`);
+            
+            for (let i = 0; i < Math.min(chunks.length, 3); i++) { // 最多發送3段
+                await message.channel.send(`\`\`\`html\n${chunks[i]}\n\`\`\``);
+                await new Promise(resolve => setTimeout(resolve, 1000)); // 避免速率限制
+            }
+            
+            if (chunks.length > 3) {
+                await message.channel.send(`... (省略了 ${chunks.length - 3} 段內容)`);
+            }
+            
+        } else {
+            // 文本文件直接發送
+            await message.reply(`📁 **${filename}** (${fileSizeKB}KB):\n\`\`\`\n${content}\n\`\`\``);
+        }
+        
+    } catch (error) {
+        await message.reply(`❌ Error exporting file: ${error.message}`);
+    }
+}
+
+// 導出最新的文件
+async function exportLatestFiles(message) {
+    try {
+        const debugDir = path.join(__dirname, 'debug-files');
+        if (!fs.existsSync(debugDir)) {
+            await message.reply('❌ No debug files directory found.');
+            return;
+        }
+        
+        const files = fs.readdirSync(debugDir)
+            .filter(file => file.endsWith('.html'))
+            .sort((a, b) => {
+                const aTime = fs.statSync(path.join(debugDir, a)).mtime;
+                const bTime = fs.statSync(path.join(debugDir, b)).mtime;
+                return bTime - aTime;
+            });
+        
+        if (files.length === 0) {
+            await message.reply('❌ No HTML files found.');
+            return;
+        }
+        
+        // 導出最新的3個文件
+        const latestFiles = files.slice(0, 3);
+        
+        for (const file of latestFiles) {
+            await exportFile(message, file);
+            await new Promise(resolve => setTimeout(resolve, 2000)); // 等待2秒避免速率限制
+        }
+        
+    } catch (error) {
+        await message.reply(`❌ Error exporting latest files: ${error.message}`);
+    }
+}
+
+// 導出最新的 API 回應
+async function exportLatestAPIResponse(message) {
+    try {
+        const debugDir = path.join(__dirname, 'debug-files');
+        const files = fs.readdirSync(debugDir)
+            .filter(file => file.includes('api_response') && file.endsWith('.html'))
+            .sort((a, b) => {
+                const aTime = fs.statSync(path.join(debugDir, a)).mtime;
+                const bTime = fs.statSync(path.join(debugDir, b)).mtime;
+                return bTime - aTime;
+            });
+        
+        if (files.length === 0) {
+            await message.reply('❌ No API response files found.');
+            return;
+        }
+        
+        const latestAPI = files[0];
+        const filepath = path.join(debugDir, latestAPI);
+        const content = fs.readFileSync(filepath, 'utf8');
+        
+        try {
+            // 嘗試解析並美化 JSON
+            const jsonData = JSON.parse(content);
+            const prettyJSON = JSON.stringify(jsonData, null, 2);
+            
+            // 分段發送
+            const chunks = chunkString(prettyJSON, 1900);
+            
+            await message.reply(`📡 **Latest API Response** (${latestAPI}):`);
+            
+            for (let i = 0; i < Math.min(chunks.length, 5); i++) {
+                await message.channel.send(`\`\`\`json\n${chunks[i]}\n\`\`\``);
+                await new Promise(resolve => setTimeout(resolve, 1000));
+            }
+            
+            if (chunks.length > 5) {
+                await message.channel.send(`... (省略了 ${chunks.length - 5} 段內容)`);
+            }
+            
+            // 特別檢查用戶數據
+            const user = jsonData.data?.user;
+            if (user) {
+                const userSummary = {
+                    username: user.username,
+                    full_name: user.full_name,
+                    is_private: user.is_private,
+                    is_verified: user.is_verified,
+                    follower_count: user.edge_followed_by?.count,
+                    following_count: user.edge_follow?.count,
+                    post_count: user.edge_owner_to_timeline_media?.count
+                };
+                
+                await message.channel.send(`👤 **User Summary:**\n\`\`\`json\n${JSON.stringify(userSummary, null, 2)}\n\`\`\``);
+                
+                // 檢查所有可能的直播相關字段
+                const allKeys = Object.keys(user);
+                const liveKeys = allKeys.filter(key => 
+                    /live|broadcast|stream|story/i.test(key)
+                );
+                
+                if (liveKeys.length > 0) {
+                    const liveData = {};
+                    liveKeys.forEach(key => {
+                        liveData[key] = user[key];
+                    });
+                    
+                    await message.channel.send(`🔍 **Live-related fields:**\n\`\`\`json\n${JSON.stringify(liveData, null, 2)}\n\`\`\``);
+                }
+            }
+            
+        } catch (e) {
+            await message.reply(`❌ Failed to parse API response as JSON: ${e.message}`);
+            await exportFile(message, latestAPI);
+        }
+        
+    } catch (error) {
+        await message.reply(`❌ Error exporting API response: ${error.message}`);
+    }
+}
+
+// 比較最新的文件
+async function compareLatestFiles(message) {
+    try {
+        const debugDir = path.join(__dirname, 'debug-files');
+        const files = fs.readdirSync(debugDir)
+            .filter(file => file.endsWith('.html'))
+            .sort((a, b) => {
+                const aTime = fs.statSync(path.join(debugDir, a)).mtime;
+                const bTime = fs.statSync(path.join(debugDir, b)).mtime;
+                return bTime - aTime;
+            });
+        
+        if (files.length < 2) {
+            await message.reply('❌ Need at least 2 files to compare.');
+            return;
+        }
+        
+        const comparison = [];
+        
+        files.slice(0, 3).forEach(file => {
+            const filepath = path.join(debugDir, file);
+            const content = fs.readFileSync(filepath, 'utf8');
+            const stats = fs.statSync(filepath);
+            
+            const analysis = {
+                filename: file,
+                size: `${(stats.size / 1024).toFixed(1)}KB`,
+                hasSharedData: /_sharedData/.test(content),
+                liveKeywords: (content.match(/直播|LIVE|live/gi) || []).length,
+                hasUserData: /"username":\s*"suteaka4649_"/.test(content),
+                framework: []
+            };
+            
+            if (/react|__REACT/i.test(content)) analysis.framework.push('React');
+            if (/vue|__VUE/i.test(content)) analysis.framework.push('Vue');
+            if (/_sharedData/.test(content)) analysis.framework.push('Instagram JS');
+            
+            comparison.push(analysis);
+        });
+        
+        const comparisonText = comparison.map(item => 
+            `**${item.filename}**\n` +
+            `Size: ${item.size}\n` +
+            `SharedData: ${item.hasSharedData ? '✅' : '❌'}\n` +
+            `Live keywords: ${item.liveKeywords}\n` +
+            `User data: ${item.hasUserData ? '✅' : '❌'}\n` +
+            `Framework: ${item.framework.join(', ') || 'None'}`
+        ).join('\n\n');
+        
+        await message.reply(`📊 **File Comparison:**\n${comparisonText}`);
+        
+    } catch (error) {
+        await message.reply(`❌ Error comparing files: ${error.message}`);
+    }
+}
+
+// 輔助函數：將字符串分段
+function chunkString(str, size) {
+    const chunks = [];
+    for (let i = 0; i < str.length; i += size) {
+        chunks.push(str.slice(i, i + size));
+    }
+    return chunks;
+}
+
+// 需要從 html-analyzer.js 導入的函數
+const { analyzeHTMLContent } = require('./html-analyzer.js');
+
 client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
     
