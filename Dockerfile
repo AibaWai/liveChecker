@@ -22,13 +22,17 @@ HEALTHCHECK --interval=5m --timeout=30s --start-period=5s --retries=3 \
 # Expose port (for Koyeb)
 EXPOSE 8000
 
+
 # Set up a simple HTTP server for health checks
-RUN echo 'const http = require("http"); \
-const server = http.createServer((req, res) => { \
-  res.writeHead(200, {"Content-Type": "text/plain"}); \
-  res.end("Instagram Live Monitor is running\\n"); \
-}); \
-server.listen(8000, () => console.log("Health server listening on port 8000"));' > health-server.js
+#RUN echo 'const http = require("http"); \
+#const server = http.createServer((req, res) => { \
+#  res.writeHead(200, {"Content-Type": "text/plain"}); \
+#  res.end("Instagram Live Monitor is running\\n"); \
+#}); \
+#server.listen(8000, () => console.log("Health server listening on port 8000"));' > health-server.js
 
 # Run both the health server and main application
-CMD ["sh", "-c", "node health-server.js & node main.js"]
+#CMD ["sh", "-c", "node health-server.js & node main.js"]
+
+# 修改 CMD 為
+CMD ["node", "main.js"]
