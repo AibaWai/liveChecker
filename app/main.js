@@ -524,7 +524,7 @@ function startSafeMonitoring() {
                 await sendDiscordMessage(`🔴 **@${TARGET_USERNAME} is now LIVE!** 🎥
 
 📺 Watch: https://www.instagram.com/${TARGET_USERNAME}/
-⏰ Detected at: ${new Date().toLocaleString()}
+⏰ Detected at: ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}
 
 🤖 Safe monitoring continues...`);
                 
@@ -533,7 +533,7 @@ function startSafeMonitoring() {
                 console.log('⚫ STATUS CHANGE: User went offline');
                 await sendDiscordMessage(`⚫ @${TARGET_USERNAME} has ended their Instagram Live stream.
 
-⏰ Ended at: ${new Date().toLocaleString()}`);
+⏰ Ended at: ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}`);
                 
             } else {
                 console.log(`📊 Status unchanged: ${currentlyLive ? '🔴 LIVE' : '⚫ Offline'} | Account: ${state.accountStatus} | Errors: ${state.consecutiveErrors}`);
@@ -559,31 +559,271 @@ function startSafeMonitoring() {
     monitorLoop();
 }
 
+// 創建Web狀態服務器
+const http = require('http');
+
+function createStatusServer() {
+    const server = http.createServer((req, res) => {
+        if (req.url === '/') {
+            const runtime = Math.round((Date.now() - state.monitoringStartTime) / 60000);
+            const successRate = state.totalRequests > 0 ? Math.round((state.successfulRequests / state.totalRequests) * 100) : 0;
+            const timeSinceLastSuccess = Math.round((Date.now() - state.lastSuccessTime) / 60000);
+            const nextCheckIn = state.isMonitoring ? Math.round(state.currentInterval) : 'Stopped';
+            
+            const html = `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Instagram Live Monitor Status</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #1a1a1a;
+            color: #e0e0e0;
+        }
+        .header {
+            text-align: center;
+            padding: 20px 0;
+            border-bottom: 2px solid #333;
+            margin-bottom: 30px;
+        }
+        .status-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        .status-card {
+            background: #2a2a2a;
+            border-radius: 10px;
+            padding: 20px;
+            border-left: 4px solid #4CAF50;
+        }
+        .status-card.warning { border-left-color: #ff9800; }
+        .status-card.error { border-left-color: #f44336; }
+        .status-card.live { border-left-color: #e91e63; }
+        .status-title {
+            font-size: 1.2em;
+            font-weight: bold;
+            margin-bottom: 15px;
+            color: #fff;
+        }
+        .status-item {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+            padding: 5px 0;
+        }
+        .status-value {
+            font-weight: bold;
+        }
+        .live-indicator {
+            font-size: 1.5em;
+            text-align: center;
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }
+        .live-yes {
+            background: linear-gradient(45deg, #e91e63, #f44336);
+            animation: pulse 2s infinite;
+        }
+        .live-no {
+            background: #424242;
+        }
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.7; }
+            100% { opacity: 1; }
+        }
+        .commands {
+            background: #2a2a2a;
+            border-radius: 10px;
+            padding: 20px;
+            margin-top: 20px;
+        }
+        .command {
+            background: #1a1a1a;
+            padding: 8px 12px;
+            border-radius: 5px;
+            margin: 5px 0;
+            font-family: 'Courier New', monospace;
+        }
+        .refresh-note {
+            text-align: center;
+            color: #888;
+            margin-top: 20px;
+            font-size: 0.9em;
+        }
+    </style>
+    <script>
+        // Auto refresh every 30 seconds
+        setTimeout(() => {
+            location.reload();
+        }, 30000);
+    </script>
+</head>
+<body>
+    <div class="header">
+        <h1>🔍 Instagram Live Monitor</h1>
+        <h2>@${TARGET_USERNAME}</h2>
+    </div>
+
+    <div class="live-indicator ${state.isLiveNow ? 'live-yes' : 'live-no'}">
+        ${state.isLiveNow ? '🔴 LIVE NOW!' : '⚫ Offline'}
+    </div>
+
+    <div class="status-grid">
+        <div class="status-card ${state.isMonitoring ? '' : 'warning'}">
+            <div class="status-title">📊 Monitor Status</div>
+            <div class="status-item">
+                <span>Monitoring:</span>
+                <span class="status-value">${state.isMonitoring ? '✅ Active' : '❌ Stopped'}</span>
+            </div>
+            <div class="status-item">
+                <span>Runtime:</span>
+                <span class="status-value">${runtime} minutes</span>
+            </div>
+            <div class="status-item">
+                <span>Next Check:</span>
+                <span class="status-value">${nextCheckIn}s</span>
+            </div>
+            <div class="status-item">
+                <span>User ID:</span>
+                <span class="status-value">${state.targetUserId || 'Not fetched'}</span>
+            </div>
+        </div>
+
+        <div class="status-card ${state.accountStatus === 'active' ? '' : 'error'}">
+            <div class="status-title">🔐 Account Status</div>
+            <div class="status-item">
+                <span>Status:</span>
+                <span class="status-value">${state.accountStatus}</span>
+            </div>
+            <div class="status-item">
+                <span>Total Requests:</span>
+                <span class="status-value">${state.totalRequests}</span>
+            </div>
+            <div class="status-item">
+                <span>Success Rate:</span>
+                <span class="status-value">${successRate}%</span>
+            </div>
+            <div class="status-item">
+                <span>Last Success:</span>
+                <span class="status-value">${timeSinceLastSuccess}m ago</span>
+            </div>
+        </div>
+
+        <div class="status-card ${state.consecutiveErrors > 2 ? 'error' : (state.consecutiveErrors > 0 ? 'warning' : '')}">
+            <div class="status-title">⚠️ Error Monitoring</div>
+            <div class="status-item">
+                <span>Consecutive Errors:</span>
+                <span class="status-value">${state.consecutiveErrors}</span>
+            </div>
+            <div class="status-item">
+                <span>Current Interval:</span>
+                <span class="status-value">${Math.round(state.currentInterval)}s</span>
+            </div>
+            <div class="status-item">
+                <span>Successful Requests:</span>
+                <span class="status-value">${state.successfulRequests}</span>
+            </div>
+            <div class="status-item">
+                <span>Started:</span>
+                <span class="status-value">${new Date(state.monitoringStartTime).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="commands">
+        <div class="status-title">💬 Discord Commands</div>
+        <div class="command">!start / !monitor - Start 24/7 monitoring</div>
+        <div class="command">!stop - Stop monitoring</div>
+        <div class="command">!status - Show detailed status</div>
+        <div class="command">!check - Manual safety check</div>
+        <div class="command">!refresh - Refresh device data</div>
+        <div class="command">!help - Show all commands</div>
+    </div>
+
+    <div class="refresh-note">
+        Page auto-refreshes every 30 seconds | Last updated: ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}
+    </div>
+</body>
+</html>`;
+            
+            res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+            res.end(html);
+        } else if (req.url === '/api/status') {
+            // JSON API endpoint
+            const statusData = {
+                target: TARGET_USERNAME,
+                isLive: state.isLiveNow,
+                isMonitoring: state.isMonitoring,
+                accountStatus: state.accountStatus,
+                runtime: Math.round((Date.now() - state.monitoringStartTime) / 60000),
+                totalRequests: state.totalRequests,
+                successfulRequests: state.successfulRequests,
+                successRate: state.totalRequests > 0 ? Math.round((state.successfulRequests / state.totalRequests) * 100) : 0,
+                consecutiveErrors: state.consecutiveErrors,
+                currentInterval: Math.round(state.currentInterval),
+                lastSuccessMinutesAgo: Math.round((Date.now() - state.lastSuccessTime) / 60000),
+                targetUserId: state.targetUserId,
+                timestamp: new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })
+            };
+            
+            res.writeHead(200, { 
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+            });
+            res.end(JSON.stringify(statusData, null, 2));
+        } else {
+            res.writeHead(404, { 'Content-Type': 'text/plain' });
+            res.end('Not Found');
+        }
+    });
+    
+    const port = process.env.PORT || 8000;
+    server.listen(port, () => {
+        console.log(`🌐 Status server running on port ${port}`);
+    });
+}
+
 client.once('ready', async () => {
     console.log(`✅ Safe Instagram Live Monitor ready as ${client.user.tag}!`);
+    
+    // 創建Web狀態服務器
+    createStatusServer();
     
     const welcomeMsg = `🔍 **Safe Instagram Live Monitor Ready**
 
 **Target:** @${TARGET_USERNAME}
-**Safety Features:** ✅ Enabled
+**Web Status:** https://worrying-emilie-k-326-629eefd7.koyeb.app/
 
-**Auto-Start Commands:**
-\`!start\` - Begin 24/7 monitoring
-\`!help\` - Show all commands
-
-**All Commands:**
-!start - 開始安全的24/7監控
-!stop - 停止監控
-!status - 詳細狀態報告（成功率、錯誤次數等）
-!check - 手動安全檢查
-!refresh - 刷新設備資料（避免被追蹤）
+📋 **Available Commands:**
+\`!start\` / \`!monitor\` - Start 24/7 monitoring
+\`!stop\` - Stop monitoring  
+\`!status\` - Show detailed status in Discord
+\`!check\` - Manual safety check
+\`!refresh\` - Refresh device data & User-Agent
+\`!help\` - Show command help
 
 🛡️ **Safety Features:**
 • Random intervals (90-180s)
 • Account status monitoring  
-• Auto error handling
+• Auto error handling & cooldowns
 • Rate limit protection
-• Device rotation`;
+• Device rotation & anti-detection
+
+🌐 **Web Dashboard:** View real-time status at the URL above
+📊 **JSON API:** Add \`/api/status\` for JSON data
+
+Ready to monitor! Use \`!start\` to begin.`;
 
     await sendDiscordMessage(welcomeMsg);
     
