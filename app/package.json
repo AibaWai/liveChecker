@@ -1,7 +1,7 @@
 {
-  "name": "instagram-live-monitor-puppeteer",
+  "name": "instagram-live-monitor-html",
   "version": "1.0.0",
-  "description": "Instagram Live monitor using Puppeteer browser automation",
+  "description": "Instagram Live monitor using HTML detection",
   "main": "main.js",
   "scripts": {
     "start": "node main.js"
@@ -12,15 +12,13 @@
     "monitor",
     "discord",
     "bot",
-    "puppeteer",
-    "browser",
-    "automation"
+    "html",
+    "detection"
   ],
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "discord.js": "^14.14.1",
-    "puppeteer": "^21.6.1"
+    "discord.js": "^14.14.1"
   },
   "engines": {
     "node": ">=18.0.0"
